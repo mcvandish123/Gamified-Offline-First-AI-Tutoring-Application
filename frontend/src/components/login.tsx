@@ -14,13 +14,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Logo } from './logo';
 
-// Adjust this URL to match your server location.
-// On Android Emulators, use http://10.0.2.2:3000
-// On physical devices, use your computer's local IP (e.g. http://192.168.1.XX:3000)
-const BACKEND_URL = Platform.select({
-  android: 'http://10.0.2.2:3000',
-  default: 'http://localhost:3000',
-});
+import Constants from 'expo-constants';
+
+const getBackendUrl = () => {
+  if (Platform.OS === 'web') {
+    return 'http://localhost:3000';
+  }
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const hostIp = hostUri.split(':')[0];
+    return `http://${hostIp}:3000`;
+  }
+  return Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+};
+
+const BACKEND_URL = getBackendUrl();
 
 interface LoginScreenProps {
   onLoginSuccess?: () => void;

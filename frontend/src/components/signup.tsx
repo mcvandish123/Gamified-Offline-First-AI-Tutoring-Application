@@ -13,10 +13,21 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logo } from './logo';
 
-const BACKEND_URL = Platform.select({
-  android: 'http://10.0.2.2:3000',
-  default: 'http://localhost:3000',
-});
+import Constants from 'expo-constants';
+
+const getBackendUrl = () => {
+  if (Platform.OS === 'web') {
+    return 'http://localhost:3000';
+  }
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const hostIp = hostUri.split(':')[0];
+    return `http://${hostIp}:3000`;
+  }
+  return Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+};
+
+const BACKEND_URL = getBackendUrl();
 
 interface SignUpScreenProps {
   onSignUpSuccess?: () => void;

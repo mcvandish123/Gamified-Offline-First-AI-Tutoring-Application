@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState } from 'react'
 import {
   StyleSheet,
   Text,
@@ -9,53 +9,58 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { Logo } from './logo';
+} from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
+import { Logo } from './logo'
+import { saveAccessToken } from '../../db/auth-storage'
 
-import Constants from 'expo-constants';
+import Constants from 'expo-constants'
 
 const getBackendUrl = () => {
   if (Platform.OS === 'web') {
-    return 'http://localhost:3000';
+    return 'http://localhost:3000'
   }
-  const hostUri = Constants.expoConfig?.hostUri;
+  const hostUri = Constants.expoConfig?.hostUri
   if (hostUri) {
-    const hostIp = hostUri.split(':')[0];
-    return `http://${hostIp}:3000`;
+    const hostIp = hostUri.split(':')[0]
+    return `http://${hostIp}:3000`
   }
-  return Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
-};
-
-const BACKEND_URL = getBackendUrl();
-
-interface LoginScreenProps {
-  onLoginSuccess?: () => void;
-  onSignUpPress?: () => void;
+  return Platform.OS === 'android'
+    ? 'http://10.0.2.2:3000'
+    : 'http://localhost:3000'
 }
 
-export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScreenProps) {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [emailFocused, setEmailFocused] = useState(false);
-  const [passwordFocused, setPasswordFocused] = useState(false);
-  
-  // States for API requests
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+const BACKEND_URL = getBackendUrl()
+
+interface LoginScreenProps {
+  onLoginSuccess?: () => void
+  onSignUpPress?: () => void
+}
+
+export default function LoginScreen({
+  onLoginSuccess,
+  onSignUpPress,
+}: LoginScreenProps) {
+  const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [emailFocused, setEmailFocused] = useState(false)
+  const [passwordFocused, setPasswordFocused] = useState(false)
+
+  const [isLoading, setIsLoading] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const handleSignIn = async () => {
     if (!email || !password) {
-      setErrorMessage('Please fill in all fields');
-      return;
+      setErrorMessage('Please fill in all fields')
+      return
     }
 
-    setIsLoading(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
+    setIsLoading(true)
+    setErrorMessage(null)
+    setSuccessMessage(null)
 
     try {
       const response = await fetch(`${BACKEND_URL}/auth/login`, {
@@ -64,34 +69,35 @@ export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScre
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email, password }),
-      });
+      })
 
-      const data = await response.json();
+      const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.message || 'Login failed. Please check your credentials.');
+        throw new Error(
+          data.message || 'Login failed. Please check your credentials.',
+        )
       }
 
-      setSuccessMessage('Login successful! Redirecting...');
-      console.log('Login Success, Token:', data.session?.access_token);
-      
-      // Store token and trigger callback / redirect (e.g., to home / explore page)
+      setSuccessMessage('Login successful! Redirecting...')
+
+      await saveAccessToken(data.session.access_token)
+
       setTimeout(() => {
         if (onLoginSuccess) {
-          onLoginSuccess();
+          onLoginSuccess()
         } else {
-          router.replace('/');
+          router.replace('/')
         }
-      }, 1500);
-
+      }, 1500)
     } catch (err: any) {
-      setErrorMessage(err.message || 'Network error. Could not connect to backend.');
+      setErrorMessage(
+        err.message || 'Network error. Could not connect to backend.',
+      )
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
-
-
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -103,20 +109,18 @@ export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScre
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
         >
-          {/* Card container wrapping all login components */}
           <View style={styles.card}>
-            {/* Logo Header */}
             <View style={styles.logoContainer}>
               <Logo style={styles.logoImage} />
             </View>
 
-            {/* Welcome Text */}
             <View style={styles.welcomeContainer}>
               <Text style={styles.title}>Welcome Back</Text>
-              <Text style={styles.subtitle}>Sign in to continue your research.</Text>
+              <Text style={styles.subtitle}>
+                Sign in to continue your research.
+              </Text>
             </View>
 
-            {/* Feedback Messages */}
             {errorMessage && (
               <View style={styles.errorContainer}>
                 <Text style={styles.errorText}>{errorMessage}</Text>
@@ -129,16 +133,11 @@ export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScre
               </View>
             )}
 
-            {/* Form Container */}
             <View style={styles.formContainer}>
-              {/* Email Field */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email Address</Text>
                 <TextInput
-                  style={[
-                    styles.input,
-                    emailFocused && styles.inputFocused,
-                  ]}
+                  style={[styles.input, emailFocused && styles.inputFocused]}
                   placeholder="name@university.edu"
                   placeholderTextColor="#A0A0B0"
                   value={email}
@@ -150,19 +149,19 @@ export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScre
                 />
               </View>
 
-              {/* Password Field */}
               <View style={styles.inputGroup}>
                 <View style={styles.passwordLabelContainer}>
                   <Text style={styles.label}>Password</Text>
-                  <TouchableOpacity onPress={() => console.log('Forgot password')}>
-                    <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+                  <TouchableOpacity
+                    onPress={() => console.log('Forgot password')}
+                  >
+                    <Text style={styles.forgotPasswordText}>
+                      Forgot Password?
+                    </Text>
                   </TouchableOpacity>
                 </View>
                 <TextInput
-                  style={[
-                    styles.input,
-                    passwordFocused && styles.inputFocused,
-                  ]}
+                  style={[styles.input, passwordFocused && styles.inputFocused]}
                   placeholder="••••••••"
                   placeholderTextColor="#A0A0B0"
                   secureTextEntry
@@ -173,9 +172,11 @@ export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScre
                 />
               </View>
 
-              {/* Sign In Button */}
-              <TouchableOpacity 
-                style={[styles.signInButton, isLoading && styles.signInButtonDisabled]} 
+              <TouchableOpacity
+                style={[
+                  styles.signInButton,
+                  isLoading && styles.signInButtonDisabled,
+                ]}
                 onPress={handleSignIn}
                 disabled={isLoading}
               >
@@ -185,12 +186,9 @@ export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScre
                   <Text style={styles.signInButtonText}>Sign In</Text>
                 )}
               </TouchableOpacity>
-
-
             </View>
           </View>
 
-          {/* Footer (outside card) */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>Don't have an account? </Text>
             <TouchableOpacity onPress={onSignUpPress}>
@@ -200,7 +198,7 @@ export default function LoginScreen({ onLoginSuccess, onSignUpPress }: LoginScre
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
@@ -364,4 +362,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6B9E1E',
   },
-});
+})

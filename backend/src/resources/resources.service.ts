@@ -2,7 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase.service';
 import Groq from 'groq-sdk';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 
 @Injectable()
 export class ResourcesService {
@@ -31,8 +31,9 @@ export class ResourcesService {
       .getPublicUrl(filePath);
 
     // 2. Extract text from PDF
-    const parsed = await pdfParse(file);
-    const rawText = parsed.text;
+    const parser = new PDFParse({ data: file }); // 'data' takes a Buffer directly
+    const result = await parser.getText();
+    const rawText = result.text;
 
     // 3. Create resource row
     const { data: resource, error: resourceError } = await client

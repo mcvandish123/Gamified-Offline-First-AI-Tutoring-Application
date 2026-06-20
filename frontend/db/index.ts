@@ -22,7 +22,9 @@ export async function initDb() {
       summary TEXT,
       key_terms TEXT,
       difficulty TEXT DEFAULT 'easy',
-      created_at TEXT
+      chat_count INTEGER DEFAULT 0,
+      created_at TEXT,
+      synced INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS flashcards (

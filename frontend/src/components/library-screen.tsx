@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { Ionicons } from '@expo/vector-icons'
+import { Logo } from './logo'
 import {
   View,
   Text,
@@ -190,10 +192,7 @@ function NewNotebookModal({
 function TopBar() {
   return (
     <View style={styles.topBar}>
-      <View style={styles.topBarLogo}>
-        <View style={styles.logoMark} />
-        <Text style={styles.logoText}>Iskolaro</Text>
-      </View>
+      <Logo style={styles.logoImage} />
       <View style={styles.offlineBadge}>
         <View style={styles.offlineDot} />
         <Text style={styles.offlineText}>Offline</Text>
@@ -263,17 +262,16 @@ function FAB({
 }
 
 interface TabItemProps {
-  icon: string
+  icon: React.ComponentProps<typeof Ionicons>['name']
   label: string
   active?: boolean
 }
 
 function TabItem({ icon, label, active }: TabItemProps) {
+  const color = active ? '#6B9E1E' : '#94a3b8'
   return (
     <View style={styles.tabItem}>
-      <Text style={[styles.tabIcon, active && styles.tabIconActive]}>
-        {icon}
-      </Text>
+      <Ionicons name={icon} size={22} color={color} />
       <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
         {label}
       </Text>
@@ -287,10 +285,10 @@ function BottomTabBar({ onLayout }: { onLayout?: (height: number) => void }) {
       style={styles.tabBar}
       onLayout={(e) => onLayout?.(e.nativeEvent.layout.height)}
     >
-      <TabItem icon="📚" label="Library" active />
-      <TabItem icon="📖" label="Study" />
-      <TabItem icon="🎮" label="Game" />
-      <TabItem icon="⚙️" label="Settings" />
+      <TabItem icon="library-outline" label="Library" active />
+      <TabItem icon="school-outline" label="Study" />
+      <TabItem icon="game-controller-outline" label="Game" />
+      <TabItem icon="settings-outline" label="Settings" />
     </View>
   )
 }
@@ -458,22 +456,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: D.divider,
   },
-  topBarLogo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  logoMark: {
-    width: 20,
-    height: 20,
-    backgroundColor: D.green,
-    borderRadius: 4,
-  },
-  logoText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: D.textPrimary,
-    letterSpacing: 0.2,
+  logoImage: {
+    width: 120,
+    height: 36,
   },
   offlineBadge: {
     flexDirection: 'row',
@@ -637,18 +622,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 3,
   },
-  tabIcon: {
-    fontSize: 20,
-    opacity: 0.45,
-  },
-  tabIconActive: { opacity: 1 },
   tabLabel: {
     fontSize: 10,
     fontWeight: '500',
-    color: D.textTabInactive,
+    color: '#94a3b8',
+    marginTop: 2,
   },
   tabLabelActive: {
-    color: D.textTabActive,
+    color: '#6B9E1E',
     fontWeight: '700',
   },
 

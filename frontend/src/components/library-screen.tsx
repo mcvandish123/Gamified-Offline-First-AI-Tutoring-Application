@@ -244,9 +244,19 @@ function NewNotebookCard({ onPress }: { onPress: () => void }) {
   )
 }
 
-function FAB({ onPress }: { onPress: () => void }) {
+function FAB({
+  onPress,
+  bottomOffset,
+}: {
+  onPress: () => void
+  bottomOffset: number
+}) {
   return (
-    <TouchableOpacity style={styles.fab} onPress={onPress} activeOpacity={0.85}>
+    <TouchableOpacity
+      style={[styles.fab, { bottom: bottomOffset }]}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
       <Text style={styles.fabIcon}>+</Text>
     </TouchableOpacity>
   )
@@ -271,9 +281,12 @@ function TabItem({ icon, label, active }: TabItemProps) {
   )
 }
 
-function BottomTabBar() {
+function BottomTabBar({ onLayout }: { onLayout?: (height: number) => void }) {
   return (
-    <View style={styles.tabBar}>
+    <View
+      style={styles.tabBar}
+      onLayout={(e) => onLayout?.(e.nativeEvent.layout.height)}
+    >
       <TabItem icon="📚" label="Library" active />
       <TabItem icon="📖" label="Study" />
       <TabItem icon="🎮" label="Game" />
@@ -292,6 +305,7 @@ export default function LibraryScreen({ onNotebookPress }: LibraryScreenProps) {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
+  const [tabBarHeight, setTabBarHeight] = useState(64)
 
   // Reads the current local cache and reflects it in state. SQLite is the
   // single source of truth the UI renders from — both the offline-created
@@ -410,8 +424,11 @@ export default function LibraryScreen({ onNotebookPress }: LibraryScreenProps) {
           <View style={{ height: 80 }} />
         </ScrollView>
 
-        <FAB onPress={() => setModalVisible(true)} />
-        <BottomTabBar />
+        <BottomTabBar onLayout={setTabBarHeight} />
+        <FAB
+          onPress={() => setModalVisible(true)}
+          bottomOffset={tabBarHeight + 14}
+        />
       </SafeAreaView>
     </View>
   )
@@ -583,7 +600,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 74,
     width: 48,
     height: 48,
     borderRadius: 24,

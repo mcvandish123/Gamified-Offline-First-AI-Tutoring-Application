@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   View,
   Text,
@@ -10,15 +10,52 @@ import {
   Modal,
   TextInput,
   KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import Constants from 'expo-constants'
+import {
+  getLocalModules,
+  insertLocalModule,
+  markModuleSynced,
+  type LocalModule,
+} from '../../db/modules'
+import { getAccessToken } from '../../db/auth-storage'
+import { runSync } from '../../db/sync'
+
+const getBackendUrl = () => {
+  if (Platform.OS === 'web') {
+    return 'http://localhost:3000'
+  }
+  const hostUri = Constants.expoConfig?.hostUri
+  if (hostUri) {
+    const hostIp = hostUri.split(':')[0]
+    return `http://${hostIp}:3000`
+  }
+  return Platform.OS === 'android'
+    ? 'http://10.0.2.2:3000'
+    : 'http://localhost:3000'
+}
+
+const BACKEND_URL = getBackendUrl()
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+// Notebook is a thin view-model over a LocalModule (the modules table row).
 
 export interface Notebook {
   id: string
   name: string
   chatCount: number
+  synced: boolean
+}
+
+function toNotebook(mod: LocalModule): Notebook {
+  return {
+    id: mod.id,
+    name: mod.title,
+    chatCount: mod.chat_count,
+    synced: mod.synced === 1,
+  }
 }
 
 // ─── Design Tokens ───────────────────────────────────────────────────────────
@@ -179,7 +216,15 @@ function NotebookCard({ notebook, onPress }: NotebookCardProps) {
     >
       <View style={styles.cardAccentBar} />
       <View style={styles.cardContent}>
-        <Text style={styles.cardTitle}>{notebook.name}</Text>
+        <View style={styles.cardTitleRow}>
+          <Text style={styles.cardTitle}>{notebook.name}</Text>
+          {!notebook.synced && (
+            <View
+              style={styles.pendingDot}
+              accessibilityLabel="Not yet synced"
+            />
+          )}
+        </View>
         <Text style={styles.cardSubtitle}>{notebook.chatCount} Chats</Text>
       </View>
     </TouchableOpacity>
@@ -245,15 +290,79 @@ interface LibraryScreenProps {
 
 export default function LibraryScreen({ onNotebookPress }: LibraryScreenProps) {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
+  const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
 
-  const handleCreate = (name: string) => {
-    const newNotebook: Notebook = {
-      id: Date.now().toString(),
-      name,
-      chatCount: 0,
+  // Reads the current local cache and reflects it in state. SQLite is the
+  // single source of truth the UI renders from — both the offline-created
+  // rows (synced = 0) and rows pulled down from Supabase live here.
+  const refreshFromLocal = useCallback(async () => {
+    const rows = await getLocalModules()
+    setNotebooks(rows.map(toNotebook))
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setLoading(true)
+      await refreshFromLocal()
+      if (cancelled) return
+      setLoading(false)
+
+      // Kick a sync in the background (pushes anything queued, pulls fresh
+      // data from Supabase) then re-render from local once it settles.
+      try {
+        await runSync()
+        if (!cancelled) await refreshFromLocal()
+      } catch (err) {
+        // Offline or backend unreachable — local cache is still shown
+        console.error('Initial sync failed:', err)
+      }
     }
-    setNotebooks((prev) => [...prev, newNotebook])
+
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [refreshFromLocal])
+
+  const handleCreate = async (name: string) => {
+    const tempId = `local-${Date.now()}`
+    const createdAt = new Date().toISOString()
+
+    // 1. Write to SQLite immediately (synced = 0) so it shows up instantly,
+    //    works offline, and survives an app restart even without network.
+    await insertLocalModule({ id: tempId, title: name, created_at: createdAt })
+    await refreshFromLocal()
+
+    // 2. Try to push it to Supabase right away.
+    try {
+      const token = await getAccessToken()
+      const res = await fetch(`${BACKEND_URL}/modules`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ title: name }),
+      })
+
+      if (!res.ok) {
+        // Backend reachable but rejected the request — leave it queued
+        // locally; sync.ts will retry next time the listener fires.
+        return
+      }
+
+      const json = await res.json()
+      await markModuleSynced(tempId, json.module)
+      await refreshFromLocal()
+    } catch (err) {
+      // Offline or request failed to reach the backend at all — the row
+      // stays in SQLite with synced = 0. startSyncListener() in _layout.tsx
+      // will push it automatically once connectivity returns.
+      console.error('Could not reach backend, notebook queued for sync:', err)
+    }
   }
 
   return (
@@ -281,16 +390,22 @@ export default function LibraryScreen({ onNotebookPress }: LibraryScreenProps) {
             </Text>
           </View>
 
-          <View style={styles.notebookList}>
-            {notebooks.map((nb) => (
-              <NotebookCard
-                key={nb.id}
-                notebook={nb}
-                onPress={(n) => onNotebookPress?.(n)}
-              />
-            ))}
-            <NewNotebookCard onPress={() => setModalVisible(true)} />
-          </View>
+          {loading ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator color={D.green} />
+            </View>
+          ) : (
+            <View style={styles.notebookList}>
+              {notebooks.map((nb) => (
+                <NotebookCard
+                  key={nb.id}
+                  notebook={nb}
+                  onPress={(n) => onNotebookPress?.(n)}
+                />
+              ))}
+              <NewNotebookCard onPress={() => setModalVisible(true)} />
+            </View>
+          )}
 
           <View style={{ height: 80 }} />
         </ScrollView>
@@ -387,6 +502,10 @@ const styles = StyleSheet.create({
 
   // Notebook list
   notebookList: { gap: 10 },
+  loadingState: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
 
   // Notebook card
   card: {
@@ -415,11 +534,22 @@ const styles = StyleSheet.create({
     paddingVertical: D.cardPadV,
     justifyContent: 'center',
   },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 3,
+  },
   cardTitle: {
     fontSize: 15,
     fontWeight: '600',
     color: D.textPrimary,
-    marginBottom: 3,
+  },
+  pendingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FFA500',
   },
   cardSubtitle: {
     fontSize: 12,

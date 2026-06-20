@@ -16,7 +16,67 @@ export class ModulesService {
 
     if (error) throw new BadRequestException(error.message);
 
-    return { success: true, modules: data };
+    // Attach a chat_count to each module — derived from module_chats,
+    // since modules itself doesn't store a count column.
+    const moduleIds = (data ?? []).map((m) => m.id);
+
+    if (moduleIds.length === 0) {
+      return { success: true, modules: [] };
+    }
+
+    const { data: chatRows, error: chatError } = await client
+      .from('module_chats')
+      .select('module_id')
+      .in('module_id', moduleIds);
+
+    if (chatError) throw new BadRequestException(chatError.message);
+
+    const countsByModule: Record<string, number> = {};
+    for (const row of chatRows ?? []) {
+      countsByModule[row.module_id] = (countsByModule[row.module_id] ?? 0) + 1;
+    }
+
+    const modulesWithCounts = (data ?? []).map((mod) => ({
+      ...mod,
+      chat_count: countsByModule[mod.id] ?? 0,
+    }));
+
+    return { success: true, modules: modulesWithCounts };
+  }
+
+  async createModule(userId: string, title: string) {
+    const client = this.supabase.getClient();
+
+    const { data, error } = await client
+      .from('modules')
+      .insert({
+        user_id: userId,
+        resource_id: null,
+        title,
+        summary: null,
+        key_terms: null,
+        difficulty: 'easy',
+      })
+      .select()
+      .single();
+
+    if (error) throw new BadRequestException(error.message);
+
+    return { success: true, module: { ...data, chat_count: 0 } };
+  }
+
+  async deleteModule(userId: string, moduleId: string) {
+    const client = this.supabase.getClient();
+
+    const { error } = await client
+      .from('modules')
+      .delete()
+      .eq('id', moduleId)
+      .eq('user_id', userId);
+
+    if (error) throw new BadRequestException(error.message);
+
+    return { success: true, message: 'Module deleted' };
   }
 
   async getOne(userId: string, moduleId: string) {

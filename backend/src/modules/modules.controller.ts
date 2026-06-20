@@ -1,9 +1,21 @@
-import { Controller, Get, Post, Body, Param, Headers } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Headers,
+} from '@nestjs/common';
 import { ModulesService } from './modules.service';
 import { SupabaseService } from '../supabase.service';
 
 class SyncChatsDto {
   messages!: { role: string; content: string; created_at?: string }[];
+}
+
+class CreateModuleDto {
+  title!: string;
 }
 
 @Controller('modules')
@@ -24,6 +36,24 @@ export class ModulesController {
   async getAll(@Headers('authorization') authorization: string) {
     const userId = await this.getUserId(authorization);
     return this.modulesService.getAllForUser(userId);
+  }
+
+  @Post()
+  async create(
+    @Headers('authorization') authorization: string,
+    @Body() body: CreateModuleDto,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.createModule(userId, body.title);
+  }
+
+  @Delete(':id')
+  async remove(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.deleteModule(userId, id);
   }
 
   @Get(':id')

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   StyleSheet,
   Text,
@@ -45,6 +46,10 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [confirmPasswordFocused, setConfirmPasswordFocused] = useState(false);
+
+  // Show password states
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // API states
   const [isLoading, setIsLoading] = useState(false);
@@ -181,37 +186,59 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
               {/* Password Field */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Password</Text>
-                <TextInput
-                  style={[
-                    styles.input,
-                    passwordFocused && styles.inputFocused,
-                  ]}
-                  placeholder="••••••••"
-                  placeholderTextColor="#A0A0B0"
-                  secureTextEntry
-                  value={password}
-                  onChangeText={setPassword}
-                  onFocus={() => setPasswordFocused(true)}
-                  onBlur={() => setPasswordFocused(false)}
-                />
+                <View style={[styles.inputWrapper, passwordFocused && styles.inputFocused]}>
+                  <TextInput
+                    style={styles.inputInner}
+                    placeholder="••••••••"
+                    placeholderTextColor="#A0A0B0"
+                    secureTextEntry={!showPassword}
+                    value={password}
+                    onChangeText={setPassword}
+                    onFocus={() => setPasswordFocused(true)}
+                    onBlur={() => setPasswordFocused(false)}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword((v) => !v)}
+                    style={styles.eyeButton}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    activeOpacity={0.6}
+                  >
+                    <Ionicons
+                      name={showPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={20}
+                      color="#94a3b8"
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* Confirm Password Field */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Confirm Password</Text>
-                <TextInput
-                  style={[
-                    styles.input,
-                    confirmPasswordFocused && styles.inputFocused,
-                  ]}
-                  placeholder="••••••••"
-                  placeholderTextColor="#A0A0B0"
-                  secureTextEntry
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  onFocus={() => setConfirmPasswordFocused(true)}
-                  onBlur={() => setConfirmPasswordFocused(false)}
-                />
+                <View style={[styles.inputWrapper, confirmPasswordFocused && styles.inputFocused]}>
+                  <TextInput
+                    style={styles.inputInner}
+                    placeholder="••••••••"
+                    placeholderTextColor="#A0A0B0"
+                    secureTextEntry={!showConfirmPassword}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    onFocus={() => setConfirmPasswordFocused(true)}
+                    onBlur={() => setConfirmPasswordFocused(false)}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowConfirmPassword((v) => !v)}
+                    style={styles.eyeButton}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    activeOpacity={0.6}
+                  >
+                    <Ionicons
+                      name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={20}
+                      color="#94a3b8"
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* Submit Button */}
@@ -357,6 +384,34 @@ const styles = StyleSheet.create({
         outlineStyle: 'none',
       },
     }),
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    paddingRight: 12,
+  },
+  inputInner: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#1A1A1A',
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none' as any,
+      },
+    }),
+  },
+  eyeButton: {
+    padding: 4,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   inputFocused: {
     borderColor: '#6B9E1E',

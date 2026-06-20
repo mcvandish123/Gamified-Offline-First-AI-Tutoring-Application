@@ -427,7 +427,7 @@ export default function LibraryScreen({ onNotebookPress }: LibraryScreenProps) {
         <BottomTabBar onLayout={setTabBarHeight} />
         <FAB
           onPress={() => setModalVisible(true)}
-          bottomOffset={tabBarHeight + 28}
+          bottomOffset={tabBarHeight + 50}
         />
       </SafeAreaView>
     </View>

@@ -7,42 +7,72 @@ import {
 import { useColorScheme } from 'react-native'
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon'
-import AppTabs from '@/components/app-tabs'
 import LoginScreen from '@/components/login'
 import SignUpScreen from '@/components/signup'
 import LibraryScreen, { type Notebook } from '@/components/library-screen'
 import NotebookDetailScreen from '@/components/notebook-detail-screen'
+import SettingsScreen, { type UserProfile } from '@/components/settings-screen'
+import EditProfileScreen from '@/components/edit-profile-screen'
 import { initDb } from '../../db'
 import { startSyncListener } from '../../db/sync'
+
+type Screen = 'library' | 'notebook' | 'settings' | 'editProfile'
 
 export default function TabLayout() {
   const colorScheme = useColorScheme()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isSigningUp, setIsSigningUp] = useState(false)
-  const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(
-    null,
-  )
+  const [screen, setScreen] = useState<Screen>('library')
+  const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
 
   useEffect(() => {
     initDb()
-      .then(() => {
-        startSyncListener()
-      })
+      .then(() => { startSyncListener() })
       .catch((err) => console.error('DB init failed:', err))
   }, [])
+
+  const renderAuthenticated = () => {
+    if (screen === 'notebook' && selectedNotebook) {
+      return (
+        <NotebookDetailScreen
+          notebook={{ id: selectedNotebook.id, name: selectedNotebook.name }}
+          onBack={() => setScreen('library')}
+        />
+      )
+    }
+    if (screen === 'settings') {
+      return (
+        <SettingsScreen
+          onBack={() => setScreen('library')}
+          onSignOut={() => { setIsAuthenticated(false); setScreen('library') }}
+          onEditProfile={(p) => { setProfile(p); setScreen('editProfile') }}
+        />
+      )
+    }
+    if (screen === 'editProfile' && profile) {
+      return (
+        <EditProfileScreen
+          profile={profile}
+          onBack={() => setScreen('settings')}
+          onSaved={(updated) => { setProfile(updated); setScreen('settings') }}
+        />
+      )
+    }
+    // Default: library
+    return (
+      <LibraryScreen
+        onNotebookPress={(nb) => { setSelectedNotebook(nb); setScreen('notebook') }}
+        onSettingsPress={() => setScreen('settings')}
+      />
+    )
+  }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AnimatedSplashOverlay />
       {isAuthenticated ? (
-        selectedNotebook ? (
-          <NotebookDetailScreen
-            notebook={{ id: selectedNotebook.id, name: selectedNotebook.name }}
-            onBack={() => setSelectedNotebook(null)}
-          />
-        ) : (
-          <LibraryScreen onNotebookPress={setSelectedNotebook} />
-        )
+        renderAuthenticated()
       ) : isSigningUp ? (
         <SignUpScreen
           onSignUpSuccess={() => setIsSigningUp(false)}

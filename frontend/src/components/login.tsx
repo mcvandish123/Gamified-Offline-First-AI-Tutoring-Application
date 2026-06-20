@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Ionicons } from '@expo/vector-icons'
 import {
   StyleSheet,
   Text,
@@ -47,6 +48,7 @@ export default function LoginScreen({
   const [password, setPassword] = useState('')
   const [emailFocused, setEmailFocused] = useState(false)
   const [passwordFocused, setPasswordFocused] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -160,16 +162,30 @@ export default function LoginScreen({
                     </Text>
                   </TouchableOpacity>
                 </View>
-                <TextInput
-                  style={[styles.input, passwordFocused && styles.inputFocused]}
-                  placeholder="••••••••"
-                  placeholderTextColor="#A0A0B0"
-                  secureTextEntry
-                  value={password}
-                  onChangeText={setPassword}
-                  onFocus={() => setPasswordFocused(true)}
-                  onBlur={() => setPasswordFocused(false)}
-                />
+                <View style={[styles.inputWrapper, passwordFocused && styles.inputFocused]}>
+                  <TextInput
+                    style={styles.inputInner}
+                    placeholder="••••••••"
+                    placeholderTextColor="#A0A0B0"
+                    secureTextEntry={!showPassword}
+                    value={password}
+                    onChangeText={setPassword}
+                    onFocus={() => setPasswordFocused(true)}
+                    onBlur={() => setPasswordFocused(false)}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword((v) => !v)}
+                    style={styles.eyeButton}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    activeOpacity={0.6}
+                  >
+                    <Ionicons
+                      name={showPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={20}
+                      color="#94a3b8"
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <TouchableOpacity
@@ -327,6 +343,34 @@ const styles = StyleSheet.create({
         outlineStyle: 'none',
       },
     }),
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    paddingRight: 12,
+  },
+  inputInner: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#1A1A1A',
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none' as any,
+      },
+    }),
+  },
+  eyeButton: {
+    padding: 4,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   inputFocused: {
     borderColor: '#6B9E1E',

@@ -279,7 +279,13 @@ function TabItem({ icon, label, active }: TabItemProps) {
   )
 }
 
-function BottomTabBar({ onLayout }: { onLayout?: (height: number) => void }) {
+function BottomTabBar({
+  onLayout,
+  onSettingsPress,
+}: {
+  onLayout?: (height: number) => void
+  onSettingsPress?: () => void
+}) {
   return (
     <View
       style={styles.tabBar}
@@ -288,7 +294,9 @@ function BottomTabBar({ onLayout }: { onLayout?: (height: number) => void }) {
       <TabItem icon="library-outline" label="Library" active />
       <TabItem icon="school-outline" label="Study" />
       <TabItem icon="game-controller-outline" label="Game" />
-      <TabItem icon="settings-outline" label="Settings" />
+      <TouchableOpacity style={{ flex: 1 }} onPress={onSettingsPress} activeOpacity={0.7}>
+        <TabItem icon="settings-outline" label="Settings" />
+      </TouchableOpacity>
     </View>
   )
 }
@@ -297,9 +305,10 @@ function BottomTabBar({ onLayout }: { onLayout?: (height: number) => void }) {
 
 interface LibraryScreenProps {
   onNotebookPress?: (notebook: Notebook) => void
+  onSettingsPress?: () => void
 }
 
-export default function LibraryScreen({ onNotebookPress }: LibraryScreenProps) {
+export default function LibraryScreen({ onNotebookPress, onSettingsPress }: LibraryScreenProps) {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
@@ -422,7 +431,7 @@ export default function LibraryScreen({ onNotebookPress }: LibraryScreenProps) {
           <View style={{ height: 80 }} />
         </ScrollView>
 
-        <BottomTabBar onLayout={setTabBarHeight} />
+        <BottomTabBar onLayout={setTabBarHeight} onSettingsPress={onSettingsPress} />
         <FAB
           onPress={() => setModalVisible(true)}
           bottomOffset={tabBarHeight + 50}

@@ -1,9 +1,10 @@
-import { Controller, Get, Patch, Body, Headers } from '@nestjs/common';
+import { Controller, Get, Patch, Body, Headers, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { SupabaseService } from '../supabase.service';
 
 class UpdateProfileDto {
   username?: string;
+  fullName?: string;
   avatarUrl?: string;
 }
 
@@ -16,8 +17,9 @@ export class UsersController {
 
   private async getUserId(authorization: string): Promise<string> {
     const token = authorization?.replace('Bearer ', '');
+    if (!token) throw new UnauthorizedException('No token provided');
     const { data, error } = await this.supabase.getClient().auth.getUser(token);
-    if (error) throw new Error('Unauthorized');
+    if (error || !data.user) throw new UnauthorizedException('Invalid token');
     return data.user.id;
   }
 
@@ -33,11 +35,9 @@ export class UsersController {
     @Body() body: UpdateProfileDto,
   ) {
     const userId = await this.getUserId(authorization);
-    return this.usersService.updateProfile(
-      userId,
-      body.username,
-      body.avatarUrl,
-    );
+    // Support both "username" and "fullName" field names from the frontend
+    const name = body.username ?? body.fullName;
+    return this.usersService.updateProfile(userId, name, body.avatarUrl);
   }
 
   @Get('me/progress')

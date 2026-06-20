@@ -11,10 +11,19 @@ import { ModulesService } from './modules.service';
 import { SupabaseService } from '../supabase.service';
 
 class SyncChatsDto {
-  messages!: { role: string; content: string; created_at?: string }[];
+  messages!: {
+    role: string;
+    content: string;
+    conversation_id: string;
+    created_at?: string;
+  }[];
 }
 
 class CreateModuleDto {
+  title!: string;
+}
+
+class CreateConversationDto {
   title!: string;
 }
 
@@ -82,5 +91,38 @@ export class ModulesController {
   ) {
     const userId = await this.getUserId(authorization);
     return this.modulesService.syncChats(userId, id, body.messages);
+  }
+
+  @Get(':id/conversations')
+  async getConversations(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.getConversations(userId, id);
+  }
+
+  @Post(':id/conversations')
+  async createConversation(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+    @Body() body: CreateConversationDto,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.createConversation(userId, id, body.title);
+  }
+
+  @Get(':id/conversations/:conversationId/messages')
+  async getConversationMessages(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+    @Param('conversationId') conversationId: string,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.getConversationMessages(
+      userId,
+      id,
+      conversationId,
+    );
   }
 }

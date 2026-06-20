@@ -4,6 +4,10 @@ import NetInfo from '@react-native-community/netinfo'
 import { getDb } from './index'
 import { getAccessToken } from './auth-storage'
 import { getUnsyncedModules, markModuleSynced } from './modules'
+import {
+  getUnsyncedConversations,
+  markConversationSynced,
+} from './conversations'
 
 const getBackendUrl = () => {
   if (Platform.OS === 'web') {
@@ -31,8 +35,26 @@ async function pushUnsyncedChats() {
 
   if (rows.length === 0) return
 
+  // A message can only be pushed once its parent conversation has reached
+  // Supabase (the server needs a valid conversation_id to insert against).
+  // pushUnsyncedConversations() runs before this in runSync(), but in case
+  // a conversation push failed, skip its messages this round rather than
+  // sending a conversation_id Supabase doesn't recognize yet.
+  const stillUnsyncedConvIds = new Set(
+    (
+      await db.getAllAsync<{ id: string }>(
+        `SELECT id FROM conversations WHERE synced = 0`,
+      )
+    ).map((c) => c.id),
+  )
+
+  const pushable = rows.filter(
+    (r) => !stillUnsyncedConvIds.has(r.conversation_id),
+  )
+  if (pushable.length === 0) return
+
   const byModule: Record<string, any[]> = {}
-  for (const row of rows) {
+  for (const row of pushable) {
     byModule[row.module_id] = byModule[row.module_id] || []
     byModule[row.module_id].push(row)
   }
@@ -48,6 +70,7 @@ async function pushUnsyncedChats() {
         messages: messages.map((m) => ({
           role: m.role,
           content: m.content,
+          conversation_id: m.conversation_id,
           created_at: m.created_at,
         })),
       }),
@@ -58,6 +81,40 @@ async function pushUnsyncedChats() {
       await db.execAsync(
         `UPDATE module_chats SET synced = 1 WHERE id IN (${ids})`,
       )
+    }
+  }
+}
+
+// Pushes conversations created on-device (e.g. tapping "New Chat" while
+// offline) to Supabase. Must run before pushUnsyncedChats(), since chat
+// messages reference conversation_id and the server needs that id to
+// already exist.
+async function pushUnsyncedConversations() {
+  const token = await getAccessToken()
+  const unsynced = await getUnsyncedConversations()
+
+  if (unsynced.length === 0) return
+
+  for (const conv of unsynced) {
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/modules/${conv.module_id}/conversations`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ title: conv.title }),
+        },
+      )
+
+      if (!res.ok) continue // leave synced = 0, retry next pass
+
+      const json = await res.json()
+      await markConversationSynced(conv.id, json.conversation)
+    } catch (err) {
+      console.error('Failed to push conversation', conv.id, err)
     }
   }
 }
@@ -130,13 +187,56 @@ async function pullModules() {
   }
 }
 
+// Pulls fresh conversations (with previews) for every module currently
+// cached locally. Run after modules are pulled, so the module list is
+// up to date first.
+async function pullConversations() {
+  const db = await getDb()
+  const token = await getAccessToken()
+
+  const modules = await db.getAllAsync<{ id: string }>(`SELECT id FROM modules`)
+
+  for (const mod of modules) {
+    const res = await fetch(`${BACKEND_URL}/modules/${mod.id}/conversations`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) continue
+
+    const json = await res.json()
+
+    for (const conv of json.conversations ?? []) {
+      const existing = await db.getFirstAsync<{ synced: number }>(
+        `SELECT synced FROM conversations WHERE id = ? AND synced = 0`,
+        [conv.id],
+      )
+      if (existing) continue
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO conversations
+          (id, module_id, user_id, title, created_at, updated_at, synced)
+         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+        [
+          conv.id,
+          conv.module_id,
+          conv.user_id,
+          conv.title,
+          conv.created_at,
+          conv.updated_at,
+        ],
+      )
+    }
+  }
+}
+
 export async function runSync() {
   const token = await getAccessToken()
   if (!token) return // not logged in yet, nothing to sync
 
+  await pushUnsyncedConversations()
   await pushUnsyncedChats()
   await pushUnsyncedModules()
   await pullModules()
+  await pullConversations()
 }
 
 export function startSyncListener() {

@@ -10,7 +10,8 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon'
 import AppTabs from '@/components/app-tabs'
 import LoginScreen from '@/components/login'
 import SignUpScreen from '@/components/signup'
-import LibraryScreen from '@/components/library-screen'
+import LibraryScreen, { type Notebook } from '@/components/library-screen'
+import NotebookDetailScreen from '@/components/notebook-detail-screen'
 import { initDb } from '../../db'
 import { startSyncListener } from '../../db/sync'
 
@@ -18,6 +19,9 @@ export default function TabLayout() {
   const colorScheme = useColorScheme()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isSigningUp, setIsSigningUp] = useState(false)
+  const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(
+    null,
+  )
 
   useEffect(() => {
     initDb()
@@ -31,7 +35,14 @@ export default function TabLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AnimatedSplashOverlay />
       {isAuthenticated ? (
-        <LibraryScreen />
+        selectedNotebook ? (
+          <NotebookDetailScreen
+            notebook={{ id: selectedNotebook.id, name: selectedNotebook.name }}
+            onBack={() => setSelectedNotebook(null)}
+          />
+        ) : (
+          <LibraryScreen onNotebookPress={setSelectedNotebook} />
+        )
       ) : isSigningUp ? (
         <SignUpScreen
           onSignUpSuccess={() => setIsSigningUp(false)}

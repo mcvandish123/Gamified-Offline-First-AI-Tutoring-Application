@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS modules (
   summary TEXT,
   key_terms TEXT,              -- JSON stored as string, parse with JSON.parse()
   difficulty TEXT DEFAULT 'easy',
-  created_at TEXT
+  chat_count INTEGER DEFAULT 0, -- derived count from module_chats, refreshed on pull
+  created_at TEXT,
+  synced INTEGER DEFAULT 1     -- 0 = created on-device, not yet pushed to Supabase
 );
 
 CREATE TABLE IF NOT EXISTS flashcards (
@@ -58,9 +60,20 @@ CREATE TABLE IF NOT EXISTS flashcard_progress (
   synced INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  module_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,         -- user-provided when starting "New Chat"
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  synced INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS module_chats (
   id TEXT PRIMARY KEY,           -- UUID generated on-device
   module_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL, -- groups messages into a named thread
   user_id TEXT NOT NULL,
   role TEXT NOT NULL,            -- 'user' or 'assistant'
   content TEXT NOT NULL,

@@ -67,9 +67,20 @@ export async function initDb() {
       synced INTEGER DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      module_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      synced INTEGER DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS module_chats (
       id TEXT PRIMARY KEY,
       module_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,

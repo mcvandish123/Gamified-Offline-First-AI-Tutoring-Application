@@ -14,7 +14,7 @@ import NotebookDetailScreen from '@/components/notebook-detail-screen'
 import SettingsScreen, { type UserProfile } from '@/components/settings-screen'
 import EditProfileScreen from '@/components/edit-profile-screen'
 import { initDb } from '../../db'
-import { startSyncListener } from '../../db/sync'
+import { runSync, startSyncListener } from '../../db/sync'
 
 type Screen = 'library' | 'notebook' | 'settings' | 'editProfile'
 
@@ -23,12 +23,21 @@ export default function TabLayout() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isSigningUp, setIsSigningUp] = useState(false)
   const [screen, setScreen] = useState<Screen>('library')
-  const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(null)
+  const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(
+    null,
+  )
   const [profile, setProfile] = useState<UserProfile | null>(null)
 
   useEffect(() => {
     initDb()
-      .then(() => { startSyncListener() })
+      .then(() => {
+        startSyncListener()
+        // Also sync once on launch — startSyncListener only fires on
+        // network *transitions*, so a backlog of unsynced rows (e.g. from
+        // before a backend fix landed) would otherwise sit untouched until
+        // connectivity happens to drop and come back.
+        runSync().catch((err) => console.error('Initial sync failed:', err))
+      })
       .catch((err) => console.error('DB init failed:', err))
   }, [])
 
@@ -45,8 +54,14 @@ export default function TabLayout() {
       return (
         <SettingsScreen
           onBack={() => setScreen('library')}
-          onSignOut={() => { setIsAuthenticated(false); setScreen('library') }}
-          onEditProfile={(p) => { setProfile(p); setScreen('editProfile') }}
+          onSignOut={() => {
+            setIsAuthenticated(false)
+            setScreen('library')
+          }}
+          onEditProfile={(p) => {
+            setProfile(p)
+            setScreen('editProfile')
+          }}
         />
       )
     }
@@ -55,14 +70,20 @@ export default function TabLayout() {
         <EditProfileScreen
           profile={profile}
           onBack={() => setScreen('settings')}
-          onSaved={(updated) => { setProfile(updated); setScreen('settings') }}
+          onSaved={(updated) => {
+            setProfile(updated)
+            setScreen('settings')
+          }}
         />
       )
     }
     // Default: library
     return (
       <LibraryScreen
-        onNotebookPress={(nb) => { setSelectedNotebook(nb); setScreen('notebook') }}
+        onNotebookPress={(nb) => {
+          setSelectedNotebook(nb)
+          setScreen('notebook')
+        }}
         onSettingsPress={() => setScreen('settings')}
       />
     )

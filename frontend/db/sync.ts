@@ -1,5 +1,3 @@
-import { Platform } from 'react-native'
-import Constants from 'expo-constants'
 import NetInfo from '@react-native-community/netinfo'
 import { getDb } from './index'
 import { getAccessToken } from './auth-storage'
@@ -8,22 +6,7 @@ import {
   getUnsyncedConversations,
   markConversationSynced,
 } from './conversations'
-
-const getBackendUrl = () => {
-  if (Platform.OS === 'web') {
-    return 'http://localhost:3000'
-  }
-  const hostUri = Constants.expoConfig?.hostUri
-  if (hostUri) {
-    const hostIp = hostUri.split(':')[0]
-    return `http://${hostIp}:3000`
-  }
-  return Platform.OS === 'android'
-    ? 'http://10.0.2.2:3000'
-    : 'http://localhost:3000'
-}
-
-const BACKEND_URL = getBackendUrl()
+import { BACKEND_URL } from '../src/lib/api'
 
 async function pushUnsyncedChats() {
   const db = await getDb()
@@ -109,7 +92,13 @@ async function pushUnsyncedConversations() {
         },
       )
 
-      if (!res.ok) continue // leave synced = 0, retry next pass
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '')
+        console.error(
+          `Failed to push conversation ${conv.id} (HTTP ${res.status}): ${errBody}`,
+        )
+        continue // leave synced = 0, retry next pass
+      }
 
       const json = await res.json()
       await markConversationSynced(conv.id, json.conversation)
@@ -140,7 +129,13 @@ async function pushUnsyncedModules() {
         body: JSON.stringify({ title: mod.title }),
       })
 
-      if (!res.ok) continue // leave synced = 0, retry on next sync pass
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '')
+        console.error(
+          `Failed to push module ${mod.id} (HTTP ${res.status}): ${errBody}`,
+        )
+        continue // leave synced = 0, retry on next sync pass
+      }
 
       const json = await res.json()
       await markModuleSynced(mod.id, json.module)
@@ -228,13 +223,32 @@ async function pullConversations() {
   }
 }
 
+// Counts every locally-created row across all syncable tables that hasn't
+// reached Supabase yet. Used by the UI to show a "N pending" badge and to
+// know when there's nothing left to push.
+export async function getUnsyncedCount(): Promise<number> {
+  const db = await getDb()
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT
+      (SELECT COUNT(*) FROM modules WHERE synced = 0) +
+      (SELECT COUNT(*) FROM conversations WHERE synced = 0) +
+      (SELECT COUNT(*) FROM module_chats WHERE synced = 0)
+      AS count`,
+  )
+  return row?.count ?? 0
+}
+
 export async function runSync() {
   const token = await getAccessToken()
   if (!token) return // not logged in yet, nothing to sync
 
+  // Order matters: each push step can only succeed once its parent has a
+  // real Supabase id. Modules must sync before conversations (conversations
+  // reference module_id), and conversations must sync before chats
+  // (chats reference conversation_id).
+  await pushUnsyncedModules()
   await pushUnsyncedConversations()
   await pushUnsyncedChats()
-  await pushUnsyncedModules()
   await pullModules()
   await pullConversations()
 }

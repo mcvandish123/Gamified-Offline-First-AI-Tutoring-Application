@@ -15,11 +15,6 @@ export class SupabaseService {
           autoRefreshToken: false,
           persistSession: false,
         },
-        global: {
-          headers: {
-            Authorization: `Bearer ${this.config.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-          },
-        },
       },
     );
   }

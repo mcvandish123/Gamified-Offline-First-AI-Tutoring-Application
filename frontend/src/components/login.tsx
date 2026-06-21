@@ -15,24 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { Logo } from './logo'
 import { saveAccessToken } from '../../db/auth-storage'
-
-import Constants from 'expo-constants'
-
-const getBackendUrl = () => {
-  if (Platform.OS === 'web') {
-    return 'http://localhost:3000'
-  }
-  const hostUri = Constants.expoConfig?.hostUri
-  if (hostUri) {
-    const hostIp = hostUri.split(':')[0]
-    return `http://${hostIp}:3000`
-  }
-  return Platform.OS === 'android'
-    ? 'http://10.0.2.2:3000'
-    : 'http://localhost:3000'
-}
-
-const BACKEND_URL = getBackendUrl()
+import { BACKEND_URL } from '../lib/api'
 
 interface LoginScreenProps {
   onLoginSuccess?: () => void
@@ -162,7 +145,12 @@ export default function LoginScreen({
                     </Text>
                   </TouchableOpacity>
                 </View>
-                <View style={[styles.inputWrapper, passwordFocused && styles.inputFocused]}>
+                <View
+                  style={[
+                    styles.inputWrapper,
+                    passwordFocused && styles.inputFocused,
+                  ]}
+                >
                   <TextInput
                     style={styles.inputInner}
                     placeholder="••••••••"

@@ -14,8 +14,8 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
-import Constants from 'expo-constants'
 import { getAccessToken } from '../../db/auth-storage'
+import { BACKEND_URL } from '../lib/api'
 import type { UserProfile } from './settings-screen'
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
@@ -33,15 +33,6 @@ const C = {
   helperText: '#64748B',
 } as const
 
-// ─── Backend URL ──────────────────────────────────────────────────────────────
-const getBackendUrl = () => {
-  if (Platform.OS === 'web') return 'http://localhost:3000'
-  const hostUri = Constants.expoConfig?.hostUri
-  if (hostUri) return `http://${hostUri.split(':')[0]}:3000`
-  return Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000'
-}
-const BACKEND_URL = getBackendUrl()
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface EditProfileScreenProps {
   profile: UserProfile
@@ -50,7 +41,11 @@ interface EditProfileScreenProps {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function EditProfileScreen({ profile, onBack, onSaved }: EditProfileScreenProps) {
+export default function EditProfileScreen({
+  profile,
+  onBack,
+  onSaved,
+}: EditProfileScreenProps) {
   const [fullName, setFullName] = useState(profile.username ?? '')
   const [nameFocused, setNameFocused] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -85,7 +80,10 @@ export default function EditProfileScreen({ profile, onBack, onSaved }: EditProf
 
   return (
     // SafeAreaView owns ALL edges — handles notch, home bar, macOS titlebar
-    <SafeAreaView style={styles.root} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={styles.root}
+      edges={['top', 'left', 'right', 'bottom']}
+    >
       <StatusBar barStyle="dark-content" backgroundColor={C.headerBg} />
 
       {/* ── Header ── */}
@@ -120,7 +118,6 @@ export default function EditProfileScreen({ profile, onBack, onSaved }: EditProf
         >
           {/* Max-width wrapper: centers form on iPad / macOS windows */}
           <View style={styles.formCard}>
-
             {/* Full Name */}
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Full Name</Text>
@@ -144,10 +141,18 @@ export default function EditProfileScreen({ profile, onBack, onSaved }: EditProf
                 <Text style={styles.disabledInputText} numberOfLines={1}>
                   {profile.email}
                 </Text>
-                <Ionicons name="lock-closed-outline" size={16} color={C.textMuted} />
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={16}
+                  color={C.textMuted}
+                />
               </View>
               <View style={styles.helperRow}>
-                <Ionicons name="information-circle-outline" size={13} color={C.helperText} />
+                <Ionicons
+                  name="information-circle-outline"
+                  size={13}
+                  color={C.helperText}
+                />
                 <Text style={styles.helperText}> Email cannot be changed.</Text>
               </View>
             </View>
@@ -177,7 +182,6 @@ export default function EditProfileScreen({ profile, onBack, onSaved }: EditProf
                 )}
               </TouchableOpacity>
             </View>
-
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -225,7 +229,7 @@ const styles = StyleSheet.create({
   // Scroll
   scroll: { flex: 1 },
   scrollContent: {
-    flexGrow: 1,           // critical: lets footer push down naturally
+    flexGrow: 1, // critical: lets footer push down naturally
     paddingHorizontal: 16,
     paddingTop: 28,
     paddingBottom: 16,
@@ -255,7 +259,7 @@ const styles = StyleSheet.create({
     borderColor: C.inputBorder,
     borderRadius: 10,
     paddingHorizontal: 14,
-    minHeight: 52,           // ≥48px touch target
+    minHeight: 52, // ≥48px touch target
     fontSize: 15,
     color: C.text,
     ...Platform.select({ web: { outlineStyle: 'none' as any } }),
@@ -272,7 +276,7 @@ const styles = StyleSheet.create({
     borderColor: C.inputBorder,
     borderRadius: 10,
     paddingHorizontal: 14,
-    minHeight: 52,           // ≥48px touch target
+    minHeight: 52, // ≥48px touch target
   },
   disabledInputText: {
     flex: 1,
@@ -298,7 +302,7 @@ const styles = StyleSheet.create({
   saveButton: {
     backgroundColor: C.green,
     borderRadius: 12,
-    minHeight: 52,           // ≥48px touch target + visual breathing room
+    minHeight: 52, // ≥48px touch target + visual breathing room
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

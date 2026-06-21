@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useState } from 'react'
+import { Ionicons } from '@expo/vector-icons'
 import {
   StyleSheet,
   Text,
@@ -10,71 +10,59 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Logo } from './logo';
-
-import Constants from 'expo-constants';
-
-const getBackendUrl = () => {
-  if (Platform.OS === 'web') {
-    return 'http://localhost:3000';
-  }
-  const hostUri = Constants.expoConfig?.hostUri;
-  if (hostUri) {
-    const hostIp = hostUri.split(':')[0];
-    return `http://${hostIp}:3000`;
-  }
-  return Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
-};
-
-const BACKEND_URL = getBackendUrl();
+} from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { Logo } from './logo'
+import { BACKEND_URL } from '../lib/api'
 
 interface SignUpScreenProps {
-  onSignUpSuccess?: () => void;
-  onBackToLogin?: () => void;
+  onSignUpSuccess?: () => void
+  onBackToLogin?: () => void
 }
 
-export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpScreenProps) {
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+export default function SignUpScreen({
+  onSignUpSuccess,
+  onBackToLogin,
+}: SignUpScreenProps) {
+  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
 
   // Focus states
-  const [usernameFocused, setUsernameFocused] = useState(false);
-  const [emailFocused, setEmailFocused] = useState(false);
-  const [passwordFocused, setPasswordFocused] = useState(false);
-  const [confirmPasswordFocused, setConfirmPasswordFocused] = useState(false);
+  const [usernameFocused, setUsernameFocused] = useState(false)
+  const [emailFocused, setEmailFocused] = useState(false)
+  const [passwordFocused, setPasswordFocused] = useState(false)
+  const [confirmPasswordFocused, setConfirmPasswordFocused] = useState(false)
 
   // Show password states
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   // API states
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const handleSignUp = async () => {
     if (!username || !email || !password || !confirmPassword) {
-      setErrorMessage('Please fill in all fields');
-      return;
+      setErrorMessage('Please fill in all fields')
+      return
     }
 
     if (password !== confirmPassword) {
-      setErrorMessage('Passwords do not match');
-      return;
+      setErrorMessage('Passwords do not match')
+      return
     }
 
     if (password.length < 6) {
-      setErrorMessage('Password must be at least 6 characters long');
-      return;
+      setErrorMessage('Password must be at least 6 characters long')
+      return
     }
 
-    setIsLoading(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
+    setIsLoading(true)
+    setErrorMessage(null)
+    setSuccessMessage(null)
 
     try {
       const response = await fetch(`${BACKEND_URL}/auth/register`, {
@@ -87,26 +75,30 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
           email,
           password,
         }),
-      });
+      })
 
-      const data = await response.json();
+      const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.message || 'Registration failed. Please try again.');
+        throw new Error(
+          data.message || 'Registration failed. Please try again.',
+        )
       }
 
-      setSuccessMessage('Registration successful! Redirecting to login...');
+      setSuccessMessage('Registration successful! Redirecting to login...')
       setTimeout(() => {
         if (onSignUpSuccess) {
-          onSignUpSuccess();
+          onSignUpSuccess()
         }
-      }, 1500);
+      }, 1500)
     } catch (err: any) {
-      setErrorMessage(err.message || 'Network error. Could not connect to backend.');
+      setErrorMessage(
+        err.message || 'Network error. Could not connect to backend.',
+      )
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -128,7 +120,9 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
             {/* Welcome Text */}
             <View style={styles.welcomeContainer}>
               <Text style={styles.title}>Create Account</Text>
-              <Text style={styles.subtitle}>Sign up to start your research.</Text>
+              <Text style={styles.subtitle}>
+                Sign up to start your research.
+              </Text>
             </View>
 
             {/* Feedback Messages */}
@@ -150,10 +144,7 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Username</Text>
                 <TextInput
-                  style={[
-                    styles.input,
-                    usernameFocused && styles.inputFocused,
-                  ]}
+                  style={[styles.input, usernameFocused && styles.inputFocused]}
                   placeholder="your_username"
                   placeholderTextColor="#A0A0B0"
                   value={username}
@@ -168,10 +159,7 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email Address</Text>
                 <TextInput
-                  style={[
-                    styles.input,
-                    emailFocused && styles.inputFocused,
-                  ]}
+                  style={[styles.input, emailFocused && styles.inputFocused]}
                   placeholder="name@university.edu"
                   placeholderTextColor="#A0A0B0"
                   value={email}
@@ -186,7 +174,12 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
               {/* Password Field */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Password</Text>
-                <View style={[styles.inputWrapper, passwordFocused && styles.inputFocused]}>
+                <View
+                  style={[
+                    styles.inputWrapper,
+                    passwordFocused && styles.inputFocused,
+                  ]}
+                >
                   <TextInput
                     style={styles.inputInner}
                     placeholder="••••••••"
@@ -215,7 +208,12 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
               {/* Confirm Password Field */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Confirm Password</Text>
-                <View style={[styles.inputWrapper, confirmPasswordFocused && styles.inputFocused]}>
+                <View
+                  style={[
+                    styles.inputWrapper,
+                    confirmPasswordFocused && styles.inputFocused,
+                  ]}
+                >
                   <TextInput
                     style={styles.inputInner}
                     placeholder="••••••••"
@@ -233,7 +231,9 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
                     activeOpacity={0.6}
                   >
                     <Ionicons
-                      name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
+                      name={
+                        showConfirmPassword ? 'eye-outline' : 'eye-off-outline'
+                      }
                       size={20}
                       color="#94a3b8"
                     />
@@ -243,7 +243,10 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
 
               {/* Submit Button */}
               <TouchableOpacity
-                style={[styles.signUpButton, isLoading && styles.signUpButtonDisabled]}
+                style={[
+                  styles.signUpButton,
+                  isLoading && styles.signUpButtonDisabled,
+                ]}
                 onPress={handleSignUp}
                 disabled={isLoading}
               >
@@ -266,7 +269,7 @@ export default function SignUpScreen({ onSignUpSuccess, onBackToLogin }: SignUpS
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
@@ -446,4 +449,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6B9E1E',
   },
-});
+})

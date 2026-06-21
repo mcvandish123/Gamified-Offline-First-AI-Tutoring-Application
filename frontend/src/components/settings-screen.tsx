@@ -12,8 +12,8 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
-import Constants from 'expo-constants'
 import { getAccessToken, clearAccessToken } from '../../db/auth-storage'
+import { BACKEND_URL } from '../lib/api'
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -28,15 +28,6 @@ const C = {
   signOutBorder: '#F87171',
   signOutText: '#DC2626',
 } as const
-
-// ─── Backend URL ──────────────────────────────────────────────────────────────
-const getBackendUrl = () => {
-  if (Platform.OS === 'web') return 'http://localhost:3000'
-  const hostUri = Constants.expoConfig?.hostUri
-  if (hostUri) return `http://${hostUri.split(':')[0]}:3000`
-  return Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000'
-}
-const BACKEND_URL = getBackendUrl()
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface UserProfile {
@@ -53,12 +44,18 @@ interface SettingsScreenProps {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function SettingsScreen({ onBack, onSignOut, onEditProfile }: SettingsScreenProps) {
+export default function SettingsScreen({
+  onBack,
+  onSignOut,
+  onEditProfile,
+}: SettingsScreenProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [signingOut, setSigningOut] = useState(false)
 
-  useEffect(() => { fetchProfile() }, [])
+  useEffect(() => {
+    fetchProfile()
+  }, [])
 
   const fetchProfile = async () => {
     try {
@@ -92,7 +89,10 @@ export default function SettingsScreen({ onBack, onSignOut, onEditProfile }: Set
 
   return (
     // SafeAreaView covers ALL edges — handles notch, status bar, home bar, macOS titlebar
-    <SafeAreaView style={styles.root} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={styles.root}
+      edges={['top', 'left', 'right', 'bottom']}
+    >
       <StatusBar barStyle="dark-content" backgroundColor={C.headerBg} />
 
       {/* ── Header ── */}
@@ -121,17 +121,23 @@ export default function SettingsScreen({ onBack, onSignOut, onEditProfile }: Set
       >
         {/* Constrain to maxWidth 480 on large screens, center horizontally */}
         <View style={styles.contentCard}>
-
           {/* Account Section */}
           <Text style={styles.sectionLabel}>Account</Text>
           <View style={styles.card}>
             {loading ? (
-              <ActivityIndicator color={C.green} style={{ paddingVertical: 20 }} />
+              <ActivityIndicator
+                color={C.green}
+                style={{ paddingVertical: 20 }}
+              />
             ) : (
               <>
                 {/* Subtle gray avatar — no distracting container */}
                 <View style={styles.avatarRow}>
-                  <Ionicons name="person-circle-outline" size={48} color="#CBD5E1" />
+                  <Ionicons
+                    name="person-circle-outline"
+                    size={48}
+                    color="#CBD5E1"
+                  />
                 </View>
 
                 <Text style={styles.userName}>{profile?.username ?? '—'}</Text>
@@ -168,7 +174,6 @@ export default function SettingsScreen({ onBack, onSignOut, onEditProfile }: Set
 
             <Text style={styles.version}>v1.0.0-mvp</Text>
           </View>
-
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -210,7 +215,7 @@ const styles = StyleSheet.create({
   // Scroll container
   scroll: { flex: 1 },
   scrollContent: {
-    flexGrow: 1,           // allows footer push on short AND tall screens
+    flexGrow: 1, // allows footer push on short AND tall screens
     paddingHorizontal: 16,
     paddingTop: 24,
     paddingBottom: 16,

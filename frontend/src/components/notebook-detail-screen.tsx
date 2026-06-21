@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import Constants from 'expo-constants'
 import {
   getLocalConversations,
   insertLocalConversation,
@@ -22,22 +21,7 @@ import {
 } from '../../db/conversations'
 import { getAccessToken } from '../../db/auth-storage'
 import { runSync } from '../../db/sync'
-
-const getBackendUrl = () => {
-  if (Platform.OS === 'web') {
-    return 'http://localhost:3000'
-  }
-  const hostUri = Constants.expoConfig?.hostUri
-  if (hostUri) {
-    const hostIp = hostUri.split(':')[0]
-    return `http://${hostIp}:3000`
-  }
-  return Platform.OS === 'android'
-    ? 'http://10.0.2.2:3000'
-    : 'http://localhost:3000'
-}
-
-const BACKEND_URL = getBackendUrl()
+import { BACKEND_URL } from '../lib/api'
 
 // ─── Design Tokens ───────────────────────────────────────────────────────────
 // Matches library-screen.tsx so the two screens feel like one app.
@@ -368,6 +352,18 @@ export default function NotebookDetailScreen({
     })
     await refreshFromLocal()
 
+    // If the notebook itself hasn't reached Supabase yet (still has a
+    // client-generated id), pushing this conversation now would fail —
+    // the server has no module row to attach it to. Leave it queued;
+    // runSync() pushes modules before conversations, so it'll catch up
+    // automatically once the notebook syncs (e.g. on reconnect).
+    if (notebook.id.startsWith('local-')) {
+      console.warn(
+        `Chat "${title}" queued — notebook ${notebook.id} hasn't synced to Supabase yet.`,
+      )
+      return
+    }
+
     // Try to reach Supabase right away.
     try {
       const token = await getAccessToken()
@@ -383,7 +379,15 @@ export default function NotebookDetailScreen({
         },
       )
 
-      if (!res.ok) return // stays queued, sync.ts retries later
+      if (!res.ok) {
+        // Backend reachable but rejected the request — log why, instead of
+        // failing silently. Row stays queued (synced = 0); sync.ts retries.
+        const errBody = await res.text().catch(() => '')
+        console.error(
+          `Failed to create conversation "${title}" (HTTP ${res.status}): ${errBody}`,
+        )
+        return
+      }
 
       const json = await res.json()
       await markConversationSynced(tempId, json.conversation)

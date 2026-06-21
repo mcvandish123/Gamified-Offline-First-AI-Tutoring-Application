@@ -15,7 +15,6 @@ import {
   ActivityIndicator,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import Constants from 'expo-constants'
 import {
   getLocalModules,
   insertLocalModule,
@@ -23,23 +22,8 @@ import {
   type LocalModule,
 } from '../../db/modules'
 import { getAccessToken } from '../../db/auth-storage'
-import { runSync } from '../../db/sync'
-
-const getBackendUrl = () => {
-  if (Platform.OS === 'web') {
-    return 'http://localhost:3000'
-  }
-  const hostUri = Constants.expoConfig?.hostUri
-  if (hostUri) {
-    const hostIp = hostUri.split(':')[0]
-    return `http://${hostIp}:3000`
-  }
-  return Platform.OS === 'android'
-    ? 'http://10.0.2.2:3000'
-    : 'http://localhost:3000'
-}
-
-const BACKEND_URL = getBackendUrl()
+import { runSync, getUnsyncedCount } from '../../db/sync'
+import { BACKEND_URL } from '../lib/api'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 // Notebook is a thin view-model over a LocalModule (the modules table row).
@@ -189,14 +173,40 @@ function NewNotebookModal({
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function TopBar() {
+interface TopBarProps {
+  syncing: boolean
+  pendingCount: number
+  onSyncPress: () => void
+}
+
+function TopBar({ syncing, pendingCount, onSyncPress }: TopBarProps) {
   return (
     <View style={styles.topBar}>
       <Logo style={styles.logoImage} />
-      <View style={styles.offlineBadge}>
-        <View style={styles.offlineDot} />
-        <Text style={styles.offlineText}>Offline</Text>
-      </View>
+      <TouchableOpacity
+        style={styles.offlineBadge}
+        onPress={onSyncPress}
+        disabled={syncing}
+        activeOpacity={0.7}
+      >
+        {syncing ? (
+          <ActivityIndicator size="small" color={D.textMuted} />
+        ) : (
+          <View
+            style={[
+              styles.offlineDot,
+              pendingCount === 0 && styles.offlineDotSynced,
+            ]}
+          />
+        )}
+        <Text style={styles.offlineText}>
+          {syncing
+            ? 'Syncing…'
+            : pendingCount > 0
+              ? `${pendingCount} pending · Tap to sync`
+              : 'Synced'}
+        </Text>
+      </TouchableOpacity>
     </View>
   )
 }
@@ -294,7 +304,11 @@ function BottomTabBar({
       <TabItem icon="library-outline" label="Library" active />
       <TabItem icon="school-outline" label="Study" />
       <TabItem icon="game-controller-outline" label="Game" />
-      <TouchableOpacity style={{ flex: 1 }} onPress={onSettingsPress} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={{ flex: 1 }}
+        onPress={onSettingsPress}
+        activeOpacity={0.7}
+      >
         <TabItem icon="settings-outline" label="Settings" />
       </TouchableOpacity>
     </View>
@@ -308,11 +322,16 @@ interface LibraryScreenProps {
   onSettingsPress?: () => void
 }
 
-export default function LibraryScreen({ onNotebookPress, onSettingsPress }: LibraryScreenProps) {
+export default function LibraryScreen({
+  onNotebookPress,
+  onSettingsPress,
+}: LibraryScreenProps) {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
   const [tabBarHeight, setTabBarHeight] = useState(64)
+  const [syncing, setSyncing] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
 
   // Reads the current local cache and reflects it in state. SQLite is the
   // single source of truth the UI renders from — both the offline-created
@@ -320,7 +339,22 @@ export default function LibraryScreen({ onNotebookPress, onSettingsPress }: Libr
   const refreshFromLocal = useCallback(async () => {
     const rows = await getLocalModules()
     setNotebooks(rows.map(toNotebook))
+    setPendingCount(await getUnsyncedCount())
   }, [])
+
+  const handleSync = useCallback(async () => {
+    setSyncing(true)
+    try {
+      await runSync()
+    } catch (err) {
+      // Offline or backend unreachable — local cache still shown, badge
+      // keeps reflecting whatever's still queued.
+      console.error('Manual sync failed:', err)
+    } finally {
+      await refreshFromLocal()
+      setSyncing(false)
+    }
+  }, [refreshFromLocal])
 
   useEffect(() => {
     let cancelled = false
@@ -333,12 +367,15 @@ export default function LibraryScreen({ onNotebookPress, onSettingsPress }: Libr
 
       // Kick a sync in the background (pushes anything queued, pulls fresh
       // data from Supabase) then re-render from local once it settles.
+      setSyncing(true)
       try {
         await runSync()
         if (!cancelled) await refreshFromLocal()
       } catch (err) {
         // Offline or backend unreachable — local cache is still shown
         console.error('Initial sync failed:', err)
+      } finally {
+        if (!cancelled) setSyncing(false)
       }
     }
 
@@ -370,8 +407,13 @@ export default function LibraryScreen({ onNotebookPress, onSettingsPress }: Libr
       })
 
       if (!res.ok) {
-        // Backend reachable but rejected the request — leave it queued
-        // locally; sync.ts will retry next time the listener fires.
+        // Backend reachable but rejected the request — log why, instead of
+        // failing silently. Leave it queued locally; sync.ts will retry
+        // next time the listener fires.
+        const errBody = await res.text().catch(() => '')
+        console.error(
+          `Failed to create notebook "${name}" (HTTP ${res.status}): ${errBody}`,
+        )
         return
       }
 
@@ -390,15 +432,22 @@ export default function LibraryScreen({ onNotebookPress, onSettingsPress }: Libr
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={D.headerBg} />
 
-      <TopBar />
-
       <NewNotebookModal
         visible={modalVisible}
         onClose={() => setModalVisible(false)}
         onCreate={handleCreate}
       />
 
-      <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={['top', 'left', 'right', 'bottom']}
+      >
+        <TopBar
+          syncing={syncing}
+          pendingCount={pendingCount}
+          onSyncPress={handleSync}
+        />
+
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
@@ -431,7 +480,10 @@ export default function LibraryScreen({ onNotebookPress, onSettingsPress }: Libr
           <View style={{ height: 80 }} />
         </ScrollView>
 
-        <BottomTabBar onLayout={setTabBarHeight} onSettingsPress={onSettingsPress} />
+        <BottomTabBar
+          onLayout={setTabBarHeight}
+          onSettingsPress={onSettingsPress}
+        />
         <FAB
           onPress={() => setModalVisible(true)}
           bottomOffset={tabBarHeight + 50}
@@ -459,8 +511,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: D.headerBg,
     paddingHorizontal: D.pagePadH,
-    paddingTop:
-      Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) + 8 : 8,
+    paddingTop: 8,
     paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: D.divider,
@@ -483,6 +534,9 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
     backgroundColor: '#FFA500',
+  },
+  offlineDotSynced: {
+    backgroundColor: '#22C55E',
   },
   offlineText: {
     fontSize: 12,

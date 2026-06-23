@@ -12,6 +12,39 @@ export async function getDb() {
 export async function initDb() {
   const database = await getDb()
 
+  // Migration: Add conversation_id column to module_chats if it was created in a previous version of the app
+  try {
+    const columns = await database.getAllAsync<{ name: string }>(
+      "PRAGMA table_info(module_chats)"
+    )
+    const hasConvId = columns.some(c => c.name === 'conversation_id')
+    if (columns.length > 0 && !hasConvId) {
+      console.log('Migrating module_chats table to add conversation_id column...')
+      await database.execAsync(`
+        ALTER TABLE module_chats RENAME TO temp_module_chats;
+        
+        CREATE TABLE module_chats (
+          id TEXT PRIMARY KEY,
+          module_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          synced INTEGER DEFAULT 0
+        );
+        
+        INSERT INTO module_chats (id, module_id, conversation_id, user_id, role, content, created_at, synced)
+        SELECT id, module_id, 'legacy', user_id, role, content, created_at, synced FROM temp_module_chats;
+        
+        DROP TABLE temp_module_chats;
+      `)
+      console.log('Migration completed successfully!')
+    }
+  } catch (err) {
+    console.error('Migration checks failed:', err)
+  }
+
   await database.execAsync(`
     PRAGMA journal_mode = WAL;
 

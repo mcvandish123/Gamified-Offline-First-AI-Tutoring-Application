@@ -1,4 +1,11 @@
-import { Controller, Get, Patch, Body, Headers, UnauthorizedException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Body,
+  Headers,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { SupabaseService } from '../supabase.service';
 

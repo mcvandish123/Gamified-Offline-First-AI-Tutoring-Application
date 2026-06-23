@@ -179,19 +179,21 @@ interface HeaderProps {
 
 function Header({ notebookName, onBack }: HeaderProps) {
   return (
-    <View style={styles.topBar}>
-      <TouchableOpacity
-        onPress={onBack}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        style={styles.backRow}
-      >
-        <Text style={styles.backArrow}>←</Text>
-        <Text style={styles.backTitle} numberOfLines={1}>
-          {notebookName}
-        </Text>
-      </TouchableOpacity>
-      <Text style={styles.cloudIcon}>☁</Text>
-    </View>
+    <SafeAreaView edges={['top']} style={{ backgroundColor: D.headerBg, borderBottomWidth: 1, borderBottomColor: D.divider }}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={onBack}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={styles.backRow}
+        >
+          <Text style={styles.backArrow}>←</Text>
+          <Text style={styles.backTitle} numberOfLines={1}>
+            {notebookName}
+          </Text>
+        </TouchableOpacity>
+        <Text style={styles.cloudIcon}>☁</Text>
+      </View>
+    </SafeAreaView>
   )
 }
 
@@ -343,7 +345,7 @@ export default function NotebookDetailScreen({
     const createdAt = new Date().toISOString()
 
     // Local write first — instant, works offline.
-    await insertLocalConversation({
+    const localConv = await insertLocalConversation({
       id: tempId,
       module_id: notebook.id,
       user_id: 'local', // overwritten by the server's real user_id once synced
@@ -361,6 +363,13 @@ export default function NotebookDetailScreen({
       console.warn(
         `Chat "${title}" queued — notebook ${notebook.id} hasn't synced to Supabase yet.`,
       )
+      // Redirect with tempId
+      onOpenConversation?.({
+        ...localConv,
+        message_count: 0,
+        last_message: null,
+        last_message_at: createdAt,
+      })
       return
     }
 
@@ -386,16 +395,38 @@ export default function NotebookDetailScreen({
         console.error(
           `Failed to create conversation "${title}" (HTTP ${res.status}): ${errBody}`,
         )
+        // Redirect with tempId since server rejected
+        onOpenConversation?.({
+          ...localConv,
+          message_count: 0,
+          last_message: null,
+          last_message_at: createdAt,
+        })
         return
       }
 
       const json = await res.json()
       await markConversationSynced(tempId, json.conversation)
       await refreshFromLocal()
+
+      // Redirect with Authoritative Server Conversation!
+      onOpenConversation?.({
+        ...json.conversation,
+        message_count: 0,
+        last_message: null,
+        last_message_at: createdAt,
+        synced: 1,
+      })
     } catch (err) {
-      // Offline — row stays in SQLite with synced = 0, startSyncListener()
-      // in _layout.tsx pushes it once connectivity returns.
+      // Offline — row stays in SQLite with synced = 0
       console.error('Could not reach backend, chat queued for sync:', err)
+      // Redirect with tempId (offline fallback)
+      onOpenConversation?.({
+        ...localConv,
+        message_count: 0,
+        last_message: null,
+        last_message_at: createdAt,
+      })
     }
   }
 
@@ -483,11 +514,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: D.headerBg,
     paddingHorizontal: D.pagePadH,
-    paddingTop:
-      Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) + 8 : 8,
+    paddingTop: 8,
     paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: D.divider,
   },
   backRow: {
     flexDirection: 'row',

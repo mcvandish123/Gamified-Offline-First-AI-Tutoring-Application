@@ -27,6 +27,11 @@ class CreateConversationDto {
   title!: string;
 }
 
+class AskQuestionDto {
+  messageId!: string;
+  content!: string;
+}
+
 @Controller('modules')
 export class ModulesController {
   constructor(
@@ -123,6 +128,23 @@ export class ModulesController {
       userId,
       id,
       conversationId,
+    );
+  }
+
+  @Post(':id/conversations/:conversationId/messages')
+  async sendMessage(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+    @Param('conversationId') conversationId: string,
+    @Body() body: AskQuestionDto,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.sendMessageAndGetResponse(
+      userId,
+      id,
+      conversationId,
+      body.messageId,
+      body.content,
     );
   }
 }

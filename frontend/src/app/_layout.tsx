@@ -11,12 +11,13 @@ import LoginScreen from '@/components/login'
 import SignUpScreen from '@/components/signup'
 import LibraryScreen, { type Notebook } from '@/components/library-screen'
 import NotebookDetailScreen from '@/components/notebook-detail-screen'
+import ChatScreen from '@/components/chat-screen'
 import SettingsScreen, { type UserProfile } from '@/components/settings-screen'
 import EditProfileScreen from '@/components/edit-profile-screen'
 import { initDb } from '../../db'
 import { runSync, startSyncListener } from '../../db/sync'
 
-type Screen = 'library' | 'notebook' | 'settings' | 'editProfile'
+type Screen = 'library' | 'notebook' | 'settings' | 'editProfile' | 'chat'
 
 export default function TabLayout() {
   const colorScheme = useColorScheme()
@@ -26,6 +27,7 @@ export default function TabLayout() {
   const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(
     null,
   )
+  const [selectedConversation, setSelectedConversation] = useState<any | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
 
   useEffect(() => {
@@ -42,11 +44,25 @@ export default function TabLayout() {
   }, [])
 
   const renderAuthenticated = () => {
+    if (screen === 'chat' && selectedNotebook && selectedConversation) {
+      return (
+        <ChatScreen
+          notebook={{ id: selectedNotebook.id, name: selectedNotebook.name }}
+          conversation={{ id: selectedConversation.id, title: selectedConversation.title }}
+          onBack={() => setScreen('notebook')}
+          onNavigateToSettings={() => setScreen('settings')}
+        />
+      )
+    }
     if (screen === 'notebook' && selectedNotebook) {
       return (
         <NotebookDetailScreen
           notebook={{ id: selectedNotebook.id, name: selectedNotebook.name }}
           onBack={() => setScreen('library')}
+          onOpenConversation={(conv) => {
+            setSelectedConversation(conv)
+            setScreen('chat')
+          }}
         />
       )
     }

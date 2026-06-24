@@ -27,7 +27,9 @@ export default function TabLayout() {
   const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(
     null,
   )
-  const [selectedConversation, setSelectedConversation] = useState<any | null>(null)
+  const [selectedConversation, setSelectedConversation] = useState<any | null>(
+    null,
+  )
   const [profile, setProfile] = useState<UserProfile | null>(null)
 
   useEffect(() => {
@@ -48,9 +50,13 @@ export default function TabLayout() {
       return (
         <ChatScreen
           notebook={{ id: selectedNotebook.id, name: selectedNotebook.name }}
-          conversation={{ id: selectedConversation.id, title: selectedConversation.title }}
+          conversation={{
+            id: selectedConversation.id,
+            title: selectedConversation.title,
+          }}
           onBack={() => setScreen('notebook')}
           onNavigateToSettings={() => setScreen('settings')}
+          onNavigateToLibrary={() => setScreen('library')}
         />
       )
     }

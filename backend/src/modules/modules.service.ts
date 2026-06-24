@@ -26,23 +26,26 @@ export class ModulesService {
 
     if (error) throw new BadRequestException(error.message);
 
-    // Attach a chat_count to each module — derived from module_chats,
-    // since modules itself doesn't store a count column.
+    // Attach a chat_count to each module — this is the number of
+    // CONVERSATIONS (named chat threads) under that module, not the number
+    // of individual chat messages, since modules itself doesn't store a
+    // count column.
     const moduleIds = (data ?? []).map((m) => m.id);
 
     if (moduleIds.length === 0) {
       return { success: true, modules: [] };
     }
 
-    const { data: chatRows, error: chatError } = await client
-      .from('module_chats')
+    const { data: conversationRows, error: conversationError } = await client
+      .from('conversations')
       .select('module_id')
       .in('module_id', moduleIds);
 
-    if (chatError) throw new BadRequestException(chatError.message);
+    if (conversationError)
+      throw new BadRequestException(conversationError.message);
 
     const countsByModule: Record<string, number> = {};
-    for (const row of chatRows ?? []) {
+    for (const row of conversationRows ?? []) {
       countsByModule[row.module_id] = (countsByModule[row.module_id] ?? 0) + 1;
     }
 
@@ -102,6 +105,123 @@ export class ModulesService {
     if (error) throw new BadRequestException(error.message);
 
     return { success: true, module: data };
+  }
+
+  // Conversation Sources — the list of resource files active in a given chat.
+  // Multiple resources can be attached to one conversation.
+
+  async getConversationSources(
+    userId: string,
+    moduleId: string,
+    conversationId: string,
+  ) {
+    const client = this.supabase.getClient();
+
+    // Fetch sources joined with their resource rows so the client gets
+    // title/type in one round trip instead of N follow-up fetches.
+    const { data, error } = await client
+      .from('conversation_sources')
+      .select(
+        'id, resource_id, added_at, resources(id, title, file_type, file_url, is_processed, created_at)',
+      )
+      .eq('conversation_id', conversationId)
+      .order('added_at', { ascending: true });
+
+    if (error) throw new BadRequestException(error.message);
+
+    const rows = (data ?? []) as unknown as {
+      id: string;
+      resource_id: string;
+      added_at: string;
+      resources: {
+        id: string;
+        title: string;
+        file_type: string;
+        file_url: string;
+        is_processed: boolean;
+        created_at: string;
+      } | null;
+    }[];
+
+    return {
+      success: true,
+      // Flat list of source ids/resource_ids for the sync engine
+      sources: rows.map((r) => ({
+        id: r.id,
+        resource_id: r.resource_id,
+        added_at: r.added_at,
+      })),
+      // Richer list with embedded resource metadata for the UI
+      sources_with_resource: rows.map((r) => ({
+        id: r.id,
+        resource_id: r.resource_id,
+        added_at: r.added_at,
+        resource: r.resources ? { ...r.resources, user_id: userId } : null,
+      })),
+    };
+  }
+
+  async addConversationSource(
+    userId: string,
+    moduleId: string,
+    conversationId: string,
+    resourceId: string,
+  ) {
+    const client = this.supabase.getClient();
+
+    // Verify the resource belongs to this user
+    const { data: resource, error: resError } = await client
+      .from('resources')
+      .select('id, title, file_type, file_url, is_processed, created_at')
+      .eq('id', resourceId)
+      .eq('user_id', userId)
+      .single();
+
+    if (resError) throw new BadRequestException('Resource not found');
+
+    // Idempotent — ignore if already attached
+    const { data: existing } = await client
+      .from('conversation_sources')
+      .select('id')
+      .eq('conversation_id', conversationId)
+      .eq('resource_id', resourceId)
+      .maybeSingle();
+
+    if (existing) {
+      return { success: true, source: existing, resource };
+    }
+
+    const { data, error } = await client
+      .from('conversation_sources')
+      .insert({
+        conversation_id: conversationId,
+        resource_id: resourceId,
+        added_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) throw new BadRequestException(error.message);
+
+    return { success: true, source: data, resource };
+  }
+
+  async removeConversationSource(
+    userId: string,
+    conversationId: string,
+    resourceId: string,
+  ) {
+    const client = this.supabase.getClient();
+
+    const { error } = await client
+      .from('conversation_sources')
+      .delete()
+      .eq('conversation_id', conversationId)
+      .eq('resource_id', resourceId);
+
+    if (error) throw new BadRequestException(error.message);
+
+    return { success: true };
   }
 
   // Chats
@@ -309,17 +429,41 @@ export class ModulesService {
       resource_id: string | null;
     } | null;
 
+    // Gather text from ALL resources attached to this conversation.
+    // Falls back to the module-level resource_id when no per-conversation
+    // sources have been added yet (backwards-compatible).
+    const { data: sourcesRaw } = await client
+      .from('conversation_sources')
+      .select('resource_id')
+      .eq('conversation_id', conversationId);
+
+    const sourceResourceIds: string[] = (
+      (sourcesRaw ?? []) as { resource_id: string }[]
+    ).map((s) => s.resource_id);
+
+    if (sourceResourceIds.length === 0 && moduleData?.resource_id) {
+      sourceResourceIds.push(moduleData.resource_id);
+    }
+
     let resourceText = '';
-    if (moduleData && moduleData.resource_id) {
-      const { data: resDataRaw } = await client
+    if (sourceResourceIds.length > 0) {
+      const { data: resRows } = await client
         .from('resources')
-        .select('raw_text')
-        .eq('id', moduleData.resource_id)
-        .single();
-      const resData = resDataRaw;
-      if (resData) {
-        resourceText = resData.raw_text || '';
+        .select('title, raw_text')
+        .in('id', sourceResourceIds);
+
+      const parts: string[] = [];
+      let budget = 6000;
+      for (const row of (resRows ?? []) as {
+        title: string;
+        raw_text: string;
+      }[]) {
+        if (budget <= 0) break;
+        const chunk = (row.raw_text || '').substring(0, budget);
+        parts.push(`[Source: ${row.title}]\n${chunk}`);
+        budget -= chunk.length;
       }
+      resourceText = parts.join('\n\n');
     }
 
     // 3. Fetch conversation history (last 20 messages for context)
@@ -339,7 +483,7 @@ export class ModulesService {
 Module Title: ${moduleData?.title || 'Unknown Module'}
 ${moduleData?.summary ? `Module Summary: ${moduleData.summary}` : ''}
 ${moduleData?.key_terms ? `Key Terms: ${JSON.stringify(moduleData.key_terms)}` : ''}
-${resourceText ? `Extracted Learning Material (PDF):\n${resourceText.substring(0, 4000)}...` : ''}
+${resourceText ? `Extracted Learning Material:\n${resourceText}` : ''}
 
 Guidelines:
 - Be encouraging, conversational, and tutoring-oriented.
@@ -461,17 +605,38 @@ Guidelines:
       resource_id: string | null;
     } | null;
 
+    const { data: sourcesRaw } = await client
+      .from('conversation_sources')
+      .select('resource_id')
+      .eq('conversation_id', conversationId);
+
+    const sourceResourceIds: string[] = (
+      (sourcesRaw ?? []) as { resource_id: string }[]
+    ).map((s) => s.resource_id);
+
+    if (sourceResourceIds.length === 0 && moduleData?.resource_id) {
+      sourceResourceIds.push(moduleData.resource_id);
+    }
+
     let resourceText = '';
-    if (moduleData && moduleData.resource_id) {
-      const { data: resDataRaw } = await client
+    if (sourceResourceIds.length > 0) {
+      const { data: resRows } = await client
         .from('resources')
-        .select('raw_text')
-        .eq('id', moduleData.resource_id)
-        .single();
-      const resData = resDataRaw;
-      if (resData) {
-        resourceText = resData.raw_text || '';
+        .select('title, raw_text')
+        .in('id', sourceResourceIds);
+
+      const parts: string[] = [];
+      let budget = 6000;
+      for (const row of (resRows ?? []) as {
+        title: string;
+        raw_text: string;
+      }[]) {
+        if (budget <= 0) break;
+        const chunk = (row.raw_text || '').substring(0, budget);
+        parts.push(`[Source: ${row.title}]\n${chunk}`);
+        budget -= chunk.length;
       }
+      resourceText = parts.join('\n\n');
     }
 
     // 3. Fetch conversation history (last 20 messages for context)
@@ -491,7 +656,7 @@ Guidelines:
 Module Title: ${moduleData?.title || 'Unknown Module'}
 ${moduleData?.summary ? `Module Summary: ${moduleData.summary}` : ''}
 ${moduleData?.key_terms ? `Key Terms: ${JSON.stringify(moduleData.key_terms)}` : ''}
-${resourceText ? `Extracted Learning Material (PDF):\n${resourceText.substring(0, 4000)}...` : ''}
+${resourceText ? `Extracted Learning Material:\n${resourceText}` : ''}
 
 Guidelines:
 - Be encouraging, conversational, and tutoring-oriented.

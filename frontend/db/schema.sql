@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS modules (
   summary TEXT,
   key_terms TEXT,              -- JSON stored as string, parse with JSON.parse()
   difficulty TEXT DEFAULT 'easy',
-  chat_count INTEGER DEFAULT 0, -- derived count from module_chats, refreshed on pull
+  chat_count INTEGER DEFAULT 0, -- derived count from conversations, refreshed on pull
   created_at TEXT,
   synced INTEGER DEFAULT 1     -- 0 = created on-device, not yet pushed to Supabase
 );

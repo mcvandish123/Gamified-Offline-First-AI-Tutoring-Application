@@ -15,11 +15,13 @@ export async function initDb() {
   // Migration: Add conversation_id column to module_chats if it was created in a previous version of the app
   try {
     const columns = await database.getAllAsync<{ name: string }>(
-      "PRAGMA table_info(module_chats)"
+      'PRAGMA table_info(module_chats)',
     )
-    const hasConvId = columns.some(c => c.name === 'conversation_id')
+    const hasConvId = columns.some((c) => c.name === 'conversation_id')
     if (columns.length > 0 && !hasConvId) {
-      console.log('Migrating module_chats table to add conversation_id column...')
+      console.log(
+        'Migrating module_chats table to add conversation_id column...',
+      )
       await database.execAsync(`
         ALTER TABLE module_chats RENAME TO temp_module_chats;
         
@@ -119,6 +121,23 @@ export async function initDb() {
       content TEXT NOT NULL,
       created_at TEXT NOT NULL,
       synced INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS resources (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      file_url TEXT,
+      file_type TEXT DEFAULT 'pdf',
+      is_processed INTEGER DEFAULT 0,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS conversation_sources (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      added_at TEXT NOT NULL
     );
   `)
 

@@ -6,6 +6,8 @@ import {
   getUnsyncedConversations,
   markConversationSynced,
 } from './conversations'
+import { upsertLocalResource } from '././resources'
+import { replaceConversationSources } from './conversation-sources'
 import { BACKEND_URL } from '../src/lib/api'
 
 async function pushUnsyncedChats() {
@@ -153,9 +155,16 @@ async function pullModules() {
   const res = await fetch(`${BACKEND_URL}/modules`, {
     headers: { Authorization: `Bearer ${token}` },
   })
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '')
+    console.error(`pullModules failed (HTTP ${res.status}): ${errBody}`)
+    return
+  }
+
   const json = await res.json()
 
-  for (const mod of json.modules) {
+  for (const mod of json.modules ?? []) {
     // Don't clobber a row that's still queued to be pushed (synced = 0) —
     // it hasn't reached Supabase yet, so it can't be in this server list
     // under the same id anyway, but guard against any id collision.
@@ -238,6 +247,71 @@ export async function getUnsyncedCount(): Promise<number> {
   return row?.count ?? 0
 }
 
+// Pulls resource metadata and conversation sources for all locally-cached
+// modules and conversations. Run after pullModules() and pullConversations()
+// so those tables are populated first.
+async function pullResourcesAndSources() {
+  const db = await getDb()
+  const token = await getAccessToken()
+
+  // 1. Pull resource metadata for every module that has a resource attached
+  const modulesWithResource = await db.getAllAsync<{
+    id: string
+    resource_id: string
+  }>(`SELECT id, resource_id FROM modules WHERE resource_id IS NOT NULL`)
+
+  const fetchedResourceIds = new Set<string>()
+
+  for (const mod of modulesWithResource) {
+    if (fetchedResourceIds.has(mod.resource_id)) continue
+    try {
+      const res = await fetch(`${BACKEND_URL}/resources/${mod.resource_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) continue
+      const json = await res.json()
+      if (json.resource) {
+        await upsertLocalResource(json.resource)
+        fetchedResourceIds.add(mod.resource_id)
+      }
+    } catch (err) {
+      console.error('pullResources failed for resource', mod.resource_id, err)
+    }
+  }
+
+  // 2. Pull conversation sources (per-conversation resource list) for every
+  //    synced conversation we have locally. Also upsert any resource records
+  //    returned that we haven't cached yet.
+  const conversations = await db.getAllAsync<{ id: string; module_id: string }>(
+    `SELECT id, module_id FROM conversations WHERE synced = 1`,
+  )
+
+  for (const conv of conversations) {
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/modules/${conv.module_id}/conversations/${conv.id}/sources`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!res.ok) continue
+      const json = await res.json()
+
+      const sources: { id: string; resource_id: string; added_at: string }[] =
+        json.sources ?? []
+      await replaceConversationSources(conv.id, sources)
+
+      // Upsert resource rows that came back embedded in the sources response
+      for (const s of json.sources_with_resource ?? []) {
+        if (s.resource && !fetchedResourceIds.has(s.resource_id)) {
+          await upsertLocalResource(s.resource)
+          fetchedResourceIds.add(s.resource_id)
+        }
+      }
+    } catch (err) {
+      console.error('pullConversationSources failed for conv', conv.id, err)
+    }
+  }
+}
+
 export async function runSync() {
   const token = await getAccessToken()
   if (!token) return // not logged in yet, nothing to sync
@@ -249,8 +323,21 @@ export async function runSync() {
   await pushUnsyncedModules()
   await pushUnsyncedConversations()
   await pushUnsyncedChats()
-  await pullModules()
-  await pullConversations()
+  try {
+    await pullModules()
+  } catch (err) {
+    console.error('pullModules failed:', err)
+  }
+  try {
+    await pullConversations()
+  } catch (err) {
+    console.error('pullConversations failed:', err)
+  }
+  try {
+    await pullResourcesAndSources()
+  } catch (err) {
+    console.error('pullResourcesAndSources failed:', err)
+  }
 }
 
 export function startSyncListener() {

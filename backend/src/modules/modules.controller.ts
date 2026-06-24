@@ -32,6 +32,10 @@ class AskQuestionDto {
   content!: string;
 }
 
+class AddSourceDto {
+  resourceId!: string;
+}
+
 @Controller('modules')
 export class ModulesController {
   constructor(
@@ -145,6 +149,50 @@ export class ModulesController {
       conversationId,
       body.messageId,
       body.content,
+    );
+  }
+
+  @Get(':id/conversations/:conversationId/sources')
+  async getConversationSources(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+    @Param('conversationId') conversationId: string,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.getConversationSources(
+      userId,
+      id,
+      conversationId,
+    );
+  }
+
+  @Post(':id/conversations/:conversationId/sources')
+  async addConversationSource(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+    @Param('conversationId') conversationId: string,
+    @Body() body: AddSourceDto,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.addConversationSource(
+      userId,
+      id,
+      conversationId,
+      body.resourceId,
+    );
+  }
+
+  @Delete(':id/conversations/:conversationId/sources/:resourceId')
+  async removeConversationSource(
+    @Headers('authorization') authorization: string,
+    @Param('conversationId') conversationId: string,
+    @Param('resourceId') resourceId: string,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.removeConversationSource(
+      userId,
+      conversationId,
+      resourceId,
     );
   }
 }

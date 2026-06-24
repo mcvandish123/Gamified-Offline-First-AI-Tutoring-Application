@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Param,
   Headers,
@@ -22,6 +23,15 @@ export class ResourcesController {
     const { data, error } = await this.supabase.getClient().auth.getUser(token);
     if (error) throw new Error('Unauthorized');
     return data.user.id;
+  }
+
+  @Get(':id')
+  async getOne(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.resourcesService.getOne(userId, id);
   }
 
   @Post()

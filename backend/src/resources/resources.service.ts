@@ -15,6 +15,23 @@ export class ResourcesService {
     this.groq = new Groq({ apiKey: this.config.get('GROQ_API_KEY') });
   }
 
+  async getOne(userId: string, resourceId: string) {
+    const client = this.supabase.getClient();
+
+    const { data, error } = await client
+      .from('resources')
+      .select(
+        'id, user_id, title, file_url, file_type, is_processed, created_at',
+      )
+      .eq('id', resourceId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) throw new BadRequestException(error.message);
+
+    return { success: true, resource: data };
+  }
+
   async uploadResource(userId: string, file: Buffer, fileName: string) {
     const client = this.supabase.getClient();
 

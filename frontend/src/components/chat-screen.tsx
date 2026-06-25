@@ -218,7 +218,7 @@ export default function ChatScreen({
     let result: DocumentPicker.DocumentPickerResult
     try {
       result = await DocumentPicker.getDocumentAsync({
-        type: 'application/pdf',
+        type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
         copyToCacheDirectory: true,
       })
     } catch (err) {
@@ -241,9 +241,12 @@ export default function ChatScreen({
       // that fetch generates itself.
       formData.append('file', {
         uri: file.uri,
-        name: file.name ?? 'document.pdf',
+        name: file.name ?? 'document',
         type: file.mimeType ?? 'application/pdf',
       } as any)
+      // Also send mimeType as a plain field so the backend can branch on
+      // PDF vs image handling without having to sniff the buffer itself.
+      formData.append('mimeType', file.mimeType ?? 'application/pdf')
 
       const uploadRes = await fetch(`${BACKEND_URL}/resources`, {
         method: 'POST',

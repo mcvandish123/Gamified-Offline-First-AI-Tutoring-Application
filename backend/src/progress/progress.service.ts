@@ -93,13 +93,35 @@ export class ProgressService {
     // Award a one-time completion bonus only on the transition from
     // "not completed" to "completed" — repeated re-studies after
     // mastery is already 1.0 won't keep awarding this bonus
+    let xpAwarded = false;
     if (isCompleted && !wasAlreadyCompleted) {
       await this.xpLog.logXp(userId, 50, 'quiz'); // 50 XP for completing a module
+      xpAwarded = true;
     }
 
-    // Check if this update unlocked any achievements
-    await this.achievements.checkAchievements(userId);
+    // Check if this update unlocked any achievements (these can ALSO
+    // add bonus XP on top of the completion bonus above)
+    const achievementResult = await this.achievements.checkAchievements(userId);
 
-    return { success: true, progress: data };
+    // Same reasoning as flashcards.service.ts: only re-fetch when XP could
+    // have actually changed (completion bonus and/or achievement bonus),
+    // and re-fetch fresh rather than trusting logXp's own number, since an
+    // achievement bonus (if any) is applied AFTER logXp runs.
+    let userProgress = null;
+    if (xpAwarded || achievementResult.newlyUnlocked.length > 0) {
+      const { data: freshProgress } = await client
+        .from('user_progress')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+      userProgress = freshProgress;
+    }
+
+    return {
+      success: true,
+      progress: data,
+      userProgress,
+      newlyUnlocked: achievementResult.newlyUnlocked,
+    };
   }
 }

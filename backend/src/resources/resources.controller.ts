@@ -6,10 +6,12 @@ import {
   Headers,
   UploadedFile,
   UseInterceptors,
+  Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ResourcesService } from './resources.service';
 import { SupabaseService } from '../supabase.service';
+import { extractUserId } from '../extract-user-id';
 
 @Controller('resources')
 export class ResourcesController {
@@ -18,11 +20,8 @@ export class ResourcesController {
     private supabase: SupabaseService,
   ) {}
 
-  private async getUserId(authorization: string): Promise<string> {
-    const token = authorization?.replace('Bearer ', '');
-    const { data, error } = await this.supabase.getClient().auth.getUser(token);
-    if (error) throw new Error('Unauthorized');
-    return data.user.id;
+  private getUserId(authorization: string): string {
+    return extractUserId(authorization);
   }
 
   @Get(':id')
@@ -30,7 +29,7 @@ export class ResourcesController {
     @Headers('authorization') authorization: string,
     @Param('id') id: string,
   ) {
-    const userId = await this.getUserId(authorization);
+    const userId = this.getUserId(authorization);
     return this.resourcesService.getOne(userId, id);
   }
 
@@ -39,12 +38,14 @@ export class ResourcesController {
   async upload(
     @Headers('authorization') authorization: string,
     @UploadedFile() file: any,
+    @Body('mimeType') mimeType: string,
   ) {
-    const userId = await this.getUserId(authorization);
+    const userId = this.getUserId(authorization);
     return this.resourcesService.uploadResource(
       userId,
       file.buffer,
       file.originalname,
+      mimeType || file.mimetype,
     );
   }
 
@@ -53,7 +54,7 @@ export class ResourcesController {
     @Headers('authorization') authorization: string,
     @Param('id') id: string,
   ) {
-    const userId = await this.getUserId(authorization);
+    const userId = this.getUserId(authorization);
     return this.resourcesService.generateModules(userId, id);
   }
 }

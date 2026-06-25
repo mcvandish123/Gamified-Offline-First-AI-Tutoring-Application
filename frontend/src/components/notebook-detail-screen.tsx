@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   View,
   Text,
@@ -11,14 +11,18 @@ import {
   TextInput,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Animated,
+  Alert,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { Ionicons } from '@expo/vector-icons'
 import {
   getLocalConversations,
   insertLocalConversation,
   markConversationSynced,
   type ConversationWithPreview,
 } from '../../db/conversations'
+import { getLocalFlashcards, upsertLocalFlashcardProgress, type LocalFlashcard } from '../../db/flashcards'
 import { getAccessToken } from '../../db/auth-storage'
 import { runSync } from '../../db/sync'
 import { BACKEND_URL } from '../lib/api'
@@ -296,6 +300,512 @@ function EmptyState({ onNewChat }: { onNewChat: () => void }) {
   )
 }
 
+interface FlashcardGameSectionProps {
+  moduleId: string
+  conversations: ConversationWithPreview[]
+}
+
+function FlashcardGameSection({ moduleId, conversations }: FlashcardGameSectionProps) {
+  const [flashcards, setFlashcards] = useState<LocalFlashcard[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
+  const [compilingId, setCompilingId] = useState<string | null>(null)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [isFlipped, setIsFlipped] = useState(false)
+  const [correctCount, setCorrectCount] = useState(0)
+  const [incorrectCount, setIncorrectCount] = useState(0)
+  const [completed, setCompleted] = useState(false)
+
+  const flipAnim = useRef(new Animated.Value(0)).current
+
+  const loadCards = useCallback(async () => {
+    setLoading(true)
+    try {
+      const cards = await getLocalFlashcards(moduleId)
+      setFlashcards(cards)
+      setCurrentIndex(0)
+      setIsFlipped(false)
+      setCorrectCount(0)
+      setIncorrectCount(0)
+      setCompleted(false)
+      flipAnim.setValue(0)
+    } catch (err) {
+      console.error('Failed to load flashcards:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [moduleId])
+
+  useEffect(() => {
+    loadCards()
+  }, [loadCards])
+
+  // Compile flashcards for a specific conversation directly from selection screen
+  const handleCompileConversation = async (convId: string) => {
+    if (convId.startsWith('local-')) {
+      Alert.alert(
+        'Hold on',
+        'Please wait for this conversation to sync with the server before compiling flashcards.',
+      )
+      return
+    }
+    setCompilingId(convId)
+    try {
+      const token = await getAccessToken()
+      const res = await fetch(
+        `${BACKEND_URL}/modules/${moduleId}/conversations/${convId}/flashcards/generate`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      )
+
+      if (!res.ok) {
+        const errMsg = await res.text()
+        throw new Error(errMsg || 'Failed to compile flashcards')
+      }
+
+      const json = await res.json()
+      // Run sync to pull the newly created flashcards from the server!
+      const { runSync } = await import('../../db/sync')
+      await runSync()
+      
+      // Reload flashcards from local SQLite database
+      const cards = await getLocalFlashcards(moduleId)
+      setFlashcards(cards)
+
+      Alert.alert(
+        'Success!',
+        `Generated ${json.flashcards?.length ?? 0} flashcards for this conversation.`,
+      )
+    } catch (err: any) {
+      console.error('Error compiling flashcards:', err)
+      Alert.alert('Error', err.message || 'Could not compile flashcards. Please try again.')
+    } finally {
+      setCompilingId(null)
+    }
+  }
+
+  const handleResetDeckPress = (convId: string) => {
+    Alert.alert(
+      'Reset Flashcards',
+      'Choose how you would like to reset this conversation\'s deck:',
+      [
+        {
+          text: 'Reset Study Progress Only',
+          onPress: async () => {
+            try {
+              const { resetFlashcardProgressForConversation } = await import('../../db/flashcards')
+              await resetFlashcardProgressForConversation(convId)
+              Alert.alert('Reset Complete', 'Your study progress has been reset for this deck.')
+              await loadCards()
+            } catch (err) {
+              console.error('Failed to reset flashcard progress:', err)
+              Alert.alert('Error', 'Could not reset progress. Please try again.')
+            }
+          }
+        },
+        {
+          text: 'Delete Compiled Cards',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { clearFlashcardsForConversation } = await import('../../db/flashcards')
+              await clearFlashcardsForConversation(convId)
+              Alert.alert('Deleted', 'All compiled flashcards for this deck have been deleted.')
+              await loadCards()
+            } catch (err) {
+              console.error('Failed to clear flashcards:', err)
+              Alert.alert('Error', 'Could not delete flashcards. Please try again.')
+            }
+          }
+        },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    )
+  }
+
+  // Filter cards to play based on selection
+  const activeDeck = React.useMemo(() => {
+    if (selectedConversationId === 'legacy') {
+      return flashcards.filter((fc) => !fc.conversation_id)
+    }
+    if (selectedConversationId) {
+      return flashcards.filter((fc) => fc.conversation_id === selectedConversationId)
+    }
+    return []
+  }, [flashcards, selectedConversationId])
+
+  // Grouping helpers
+  const conversationsWithCards = React.useMemo(() => {
+    return conversations.filter((conv) =>
+      flashcards.some((fc) => fc.conversation_id === conv.id)
+    )
+  }, [conversations, flashcards])
+
+
+  const handleFlip = () => {
+    if (isFlipped) {
+      Animated.spring(flipAnim, {
+        toValue: 0,
+        friction: 8,
+        tension: 10,
+        useNativeDriver: Platform.OS !== 'web',
+      }).start()
+    } else {
+      Animated.spring(flipAnim, {
+        toValue: 180,
+        friction: 8,
+        tension: 10,
+        useNativeDriver: Platform.OS !== 'web',
+      }).start()
+    }
+    setIsFlipped(!isFlipped)
+  }
+
+  const handleAnswer = async (wasCorrect: boolean) => {
+    const currentCard = activeDeck[currentIndex]
+    if (!currentCard) return
+
+    if (wasCorrect) {
+      setCorrectCount((prev) => prev + 1)
+    } else {
+      setIncorrectCount((prev) => prev + 1)
+    }
+
+    try {
+      await upsertLocalFlashcardProgress({
+        flashcardId: currentCard.id,
+        wasCorrect,
+      })
+      runSync().catch((err) => console.error('Sync progress error:', err))
+    } catch (err) {
+      console.error('Failed to save flashcard progress:', err)
+    }
+
+    if (currentIndex + 1 < activeDeck.length) {
+      if (isFlipped) {
+        Animated.timing(flipAnim, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: Platform.OS !== 'web',
+        }).start(() => {
+          setIsFlipped(false)
+          setCurrentIndex((prev) => prev + 1)
+        })
+      } else {
+        setCurrentIndex((prev) => prev + 1)
+      }
+    } else {
+      setCompleted(true)
+    }
+  }
+
+  const handleRestart = () => {
+    setCurrentIndex(0)
+    setIsFlipped(false)
+    setCorrectCount(0)
+    setIncorrectCount(0)
+    setCompleted(false)
+    flipAnim.setValue(0)
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loadingState}>
+        <ActivityIndicator color={D.green} />
+      </View>
+    )
+  }
+
+  // 1. Selection Screen (User chooses which deck/conversation's cards to practice, or compiles them)
+  if (selectedConversationId === null) {
+    return (
+      <View style={styles.selectionContainer}>
+        <Text style={styles.selectionTitle}>Choose a Deck to Practice</Text>
+        <Text style={styles.selectionSubtitle}>
+          Generate or practice flashcards directly from any past conversation. Each conversation's flashcards are kept completely separate.
+        </Text>
+
+        <ScrollView style={styles.selectionScroll} showsVerticalScrollIndicator={false}>
+          {conversations.map((conv) => {
+            const conversationCards = flashcards.filter((fc) => fc.conversation_id === conv.id)
+            const count = conversationCards.length
+            const isCompiling = compilingId === conv.id
+            const hasMessages = conv.message_count > 0 || !!conv.last_message
+
+            // Calculate if there are new prompts since last flashcard compile
+            const latestCardTime = conversationCards.reduce((max, fc) => {
+              if (!fc.created_at) return max
+              return fc.created_at > max ? fc.created_at : max
+            }, '')
+            const hasNewPrompts = conv.last_message_at && latestCardTime ? conv.last_message_at > latestCardTime : false
+
+            return (
+              <View key={conv.id} style={styles.selectionCard}>
+                <View style={styles.selectionCardTop}>
+                  <View style={styles.selectionCardContent}>
+                    <Ionicons
+                      name={count > 0 ? "albums" : "chatbubbles-outline"}
+                      size={22}
+                      color={count > 0 ? D.green : D.textTabInactive}
+                    />
+                    <View style={styles.selectionCardText}>
+                      <Text style={styles.selectionCardTitle} numberOfLines={1}>{conv.title}</Text>
+                      <Text style={styles.selectionCardMeta}>
+                        {count > 0
+                          ? `${count} flashcards compiled${hasNewPrompts ? ' • New content!' : ''}`
+                          : hasMessages
+                          ? 'Not compiled yet'
+                          : 'No messages yet'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {count === 0 && (
+                    <View style={styles.selectionCardActions}>
+                      {isCompiling ? (
+                        <ActivityIndicator size="small" color={D.green} />
+                      ) : hasMessages ? (
+                        <TouchableOpacity
+                          style={styles.compileBtn}
+                          onPress={() => handleCompileConversation(conv.id)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.compileBtnText}>Compile</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <Text style={styles.disabledText}>Empty</Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+
+                {count > 0 && (
+                  <View style={styles.selectionCardBottomActions}>
+                    {isCompiling ? (
+                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 6 }}>
+                        <ActivityIndicator size="small" color={D.green} />
+                      </View>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          style={styles.practiceBtnDeck}
+                          onPress={() => setSelectedConversationId(conv.id)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="play" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.practiceBtnTextDeck}>Practice</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.recompileBtnDeck,
+                            hasNewPrompts ? styles.recompileBtnDeckActive : null
+                          ]}
+                          onPress={() => handleCompileConversation(conv.id)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name="sync"
+                            size={14}
+                            color={hasNewPrompts ? '#FFFFFF' : D.textSecondary}
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text
+                            style={[
+                              styles.recompileBtnTextDeck,
+                              { color: hasNewPrompts ? '#FFFFFF' : D.textSecondary }
+                            ]}
+                          >
+                            {hasNewPrompts ? 'Compile New' : 'Compile Again'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.resetBtnDeck}
+                          onPress={() => handleResetDeckPress(conv.id)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#EF4444" />
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </View>
+                )}
+              </View>
+            )
+          })}
+        </ScrollView>
+      </View>
+    )
+  }
+
+  // 2. Completed State Screen
+  if (completed) {
+    const total = activeDeck.length
+    const accuracy = Math.round((correctCount / total) * 100)
+
+    return (
+      <View style={styles.completedContainer}>
+        <View style={styles.celebrationCircle}>
+          <Ionicons name="trophy" size={44} color="#EAB308" />
+        </View>
+        <Text style={styles.completedTitle}>Round Complete!</Text>
+        <Text style={styles.completedSubtitle}>
+          You've reviewed all selected flashcards.
+        </Text>
+
+        <View style={styles.statsGrid}>
+          <View style={styles.statBox}>
+            <Text style={styles.statValue}>{total}</Text>
+            <Text style={styles.statLabel}>Reviewed</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={[styles.statValue, { color: accuracy >= 70 ? D.green : '#E11D48' }]}>
+              {accuracy}%
+            </Text>
+            <Text style={styles.statLabel}>Accuracy</Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 12, width: '100%', marginTop: 8 }}>
+          <TouchableOpacity style={[styles.btnPrimary, { flex: 1 }]} onPress={handleRestart}>
+            <Text style={styles.btnPrimaryText}>Practice Again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.btnPrimary, { flex: 1, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' }]}
+            onPress={() => {
+              handleRestart()
+              setSelectedConversationId(null)
+            }}
+          >
+            <Text style={[styles.btnPrimaryText, { color: D.textSecondary }]}>Change Deck</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
+  }
+
+  const currentCard = activeDeck[currentIndex]
+  const total = activeDeck.length
+
+  const frontInterpolate = flipAnim.interpolate({
+    inputRange: [0, 180],
+    outputRange: ['0deg', '180deg'],
+  })
+  const backInterpolate = flipAnim.interpolate({
+    inputRange: [0, 180],
+    outputRange: ['180deg', '360deg'],
+  })
+
+  const frontAnimatedStyle = {
+    transform: [{ rotateY: frontInterpolate }],
+  }
+  const backAnimatedStyle = {
+    transform: [{ rotateY: backInterpolate }],
+  }
+
+  return (
+    <View style={styles.gameWrapper}>
+      <View style={styles.progressHeader}>
+        <View style={styles.progressTextRow}>
+          <TouchableOpacity
+            style={styles.backToDecksBtn}
+            onPress={() => setSelectedConversationId(null)}
+          >
+            <Ionicons name="chevron-back" size={14} color={D.textSecondary} />
+            <Text style={styles.backToDecksText}>Decks</Text>
+          </TouchableOpacity>
+          <Text style={styles.progressCount}>
+            Card {currentIndex + 1} of {total}
+          </Text>
+        </View>
+        <View style={styles.progressBarBg}>
+          <View
+            style={[
+              styles.progressBarFill,
+              { width: `${((currentIndex + 1) / total) * 100}%` },
+            ]}
+          />
+        </View>
+      </View>
+
+      <TouchableOpacity
+        activeOpacity={0.95}
+        onPress={handleFlip}
+        style={styles.cardTouchArea}
+      >
+        <View style={styles.cardContainer}>
+          <Animated.View
+            style={[
+              styles.flashcard,
+              frontAnimatedStyle,
+              isFlipped ? { opacity: 0 } : { opacity: 1 },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardSideLabel}>QUESTION</Text>
+              <Ionicons name="help-circle-outline" size={20} color={D.green} />
+            </View>
+            <ScrollView
+              contentContainerStyle={styles.cardTextScroll}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.cardTextFront}>{currentCard.front}</Text>
+            </ScrollView>
+            <Text style={styles.cardActionHint}>Tap card to reveal answer</Text>
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.flashcard,
+              styles.flashcardBack,
+              backAnimatedStyle,
+              isFlipped ? { opacity: 1 } : { opacity: 0 },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <Text style={[styles.cardSideLabel, { color: '#EAB308' }]}>ANSWER</Text>
+              <Ionicons name="bulb-outline" size={20} color="#EAB308" />
+            </View>
+            <ScrollView
+              contentContainerStyle={styles.cardTextScroll}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.cardTextBack}>{currentCard.back}</Text>
+            </ScrollView>
+            <Text style={styles.cardActionHint}>Tap card to show question</Text>
+          </Animated.View>
+        </View>
+      </TouchableOpacity>
+
+      <View style={styles.controlsRow}>
+        <TouchableOpacity
+          style={[styles.btnAnswer, styles.btnIncorrect]}
+          onPress={() => handleAnswer(false)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="close-circle-outline" size={20} color="#E11D48" />
+          <Text style={styles.btnIncorrectText}>Review</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.btnAnswer, styles.btnCorrect]}
+          onPress={() => handleAnswer(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="checkmark-circle-outline" size={20} color={D.green} />
+          <Text style={styles.btnCorrectText}>Got It!</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+}
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 interface NotebookDetailScreenProps {
@@ -485,6 +995,8 @@ export default function NotebookDetailScreen({
                 </View>
               )}
             </>
+          ) : activeTab === 'Flashcards' ? (
+            <FlashcardGameSection moduleId={notebook.id} conversations={conversations} />
           ) : (
             <View style={styles.comingSoon}>
               <Text style={styles.comingSoonText}>
@@ -828,5 +1340,450 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  // Selection Styles
+  selectionContainer: {
+    backgroundColor: D.cardBg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    padding: 20,
+    gap: 12,
+  },
+  selectionTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: D.textPrimary,
+  },
+  selectionSubtitle: {
+    fontSize: 13,
+    color: D.textSecondary,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  selectionScroll: {
+    maxHeight: 340,
+  },
+  selectionCard: {
+    flexDirection: 'column',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    padding: 14,
+    marginBottom: 10,
+  },
+  selectionCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  selectionCardBottomActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    width: '100%',
+  },
+  practiceBtnDeck: {
+    flex: 2,
+    flexDirection: 'row',
+    backgroundColor: D.green,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  practiceBtnTextDeck: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  recompileBtnDeck: {
+    flex: 2,
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recompileBtnDeckActive: {
+    backgroundColor: D.green,
+    borderColor: D.green,
+  },
+  recompileBtnTextDeck: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  resetBtnDeck: {
+    width: 36,
+    height: 36,
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectionCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+    marginRight: 8,
+  },
+  selectionCardText: {
+    flex: 1,
+  },
+  selectionCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: D.textPrimary,
+  },
+  selectionCardMeta: {
+    fontSize: 11,
+    color: D.textMuted,
+    marginTop: 2,
+  },
+  backToDecksBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: '#E2E8F0',
+  },
+  backToDecksText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: D.textSecondary,
+  },
+  // Game Wrapper
+  gameWrapper: {
+    paddingTop: 8,
+    gap: 16,
+  },
+  progressHeader: {
+    gap: 8,
+  },
+  progressTextRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  progressCount: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: D.textSecondary,
+  },
+  xpBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF9C3',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  xpBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#854D0E',
+  },
+  progressBarBg: {
+    height: 8,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: D.green,
+    borderRadius: 4,
+  },
+
+  // Interactive Flip Card
+  cardTouchArea: {
+    width: '100%',
+    height: 320,
+    marginVertical: 12,
+  },
+  cardContainer: {
+    width: '100%',
+    height: '100%',
+  },
+  flashcard: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: D.cardBg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    padding: 20,
+    backfaceVisibility: 'hidden',
+    justifyContent: 'space-between',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+      },
+      android: { elevation: 3 },
+      web: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+        cursor: 'pointer',
+      },
+    }),
+  },
+  flashcardBack: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderColor: '#FEF08A',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: D.divider,
+    paddingBottom: 8,
+    marginBottom: 12,
+  },
+  cardSideLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: D.green,
+    letterSpacing: 1,
+  },
+  cardTextScroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardTextFront: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: D.textPrimary,
+    textAlign: 'center',
+    lineHeight: 26,
+  },
+  cardTextBack: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: D.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  cardActionHint: {
+    fontSize: 12,
+    color: D.textMuted,
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
+
+  // Controls
+  controlsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  btnAnswer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  btnIncorrect: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+  },
+  btnIncorrectText: {
+    color: '#E11D48',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  btnCorrect: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#DCFCE7',
+  },
+  btnCorrectText: {
+    color: D.green,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+
+  // Empty / Completed States
+  emptyStateContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+    backgroundColor: D.cardBg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    gap: 12,
+  },
+  emptyStateIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#F4F5F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: D.textPrimary,
+  },
+  emptyStateDescription: {
+    fontSize: 14,
+    color: D.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  completedContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 20,
+    backgroundColor: D.cardBg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    gap: 16,
+  },
+  celebrationCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FEF9C3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FDE047',
+  },
+  completedTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: D.textPrimary,
+  },
+  completedSubtitle: {
+    fontSize: 14,
+    color: D.textSecondary,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+    marginBottom: 8,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: D.textPrimary,
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: D.textMuted,
+  },
+  btnPrimary: {
+    backgroundColor: D.green,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: D.green,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+      },
+      android: { elevation: 2 },
+    }),
+  },
+  btnPrimaryText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  selectionCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  practiceBtn: {
+    backgroundColor: D.green,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  practiceBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  recompileBtn: {
+    backgroundColor: '#F1F5F9',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  compileBtn: {
+    borderWidth: 1,
+    borderColor: D.green,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#F0FDF4',
+  },
+  compileBtnText: {
+    color: D.green,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  disabledText: {
+    color: D.textMuted,
+    fontSize: 12,
+    fontStyle: 'italic',
+    paddingHorizontal: 8,
   },
 })

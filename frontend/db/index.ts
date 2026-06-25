@@ -47,6 +47,23 @@ export async function initDb() {
     console.error('Migration checks failed:', err)
   }
 
+  // Migration: Add conversation_id column to flashcards if it doesn't exist
+  try {
+    const columns = await database.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(flashcards)',
+    )
+    const hasConvId = columns.some((c) => c.name === 'conversation_id')
+    if (columns.length > 0 && !hasConvId) {
+      console.log('Migrating flashcards table to add conversation_id column...')
+      await database.execAsync(`
+        ALTER TABLE flashcards ADD COLUMN conversation_id TEXT;
+      `)
+      console.log('Migration of flashcards completed successfully!')
+    }
+  } catch (err) {
+    console.error('Flashcards migration check failed:', err)
+  }
+
   await database.execAsync(`
     PRAGMA journal_mode = WAL;
 
@@ -65,6 +82,7 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS flashcards (
       id TEXT PRIMARY KEY,
       module_id TEXT NOT NULL,
+      conversation_id TEXT,
       front TEXT NOT NULL,
       back TEXT NOT NULL,
       created_at TEXT

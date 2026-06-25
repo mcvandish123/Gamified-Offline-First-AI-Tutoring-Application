@@ -6,6 +6,7 @@ import { getDb } from './index'
 export interface LocalFlashcard {
   id: string
   module_id: string
+  conversation_id: string | null
   front: string
   back: string
   created_at: string | null
@@ -39,6 +40,17 @@ export async function getLocalFlashcards(
   )
 }
 
+export async function getLocalFlashcardsForConversation(
+  conversationId: string,
+): Promise<LocalFlashcard[]> {
+  const db = await getDb()
+  return db.getAllAsync<LocalFlashcard>(
+    `SELECT * FROM flashcards WHERE conversation_id = ? ORDER BY created_at ASC`,
+    [conversationId],
+  )
+}
+
+
 // --- Caching flashcards pulled from the server (called by sync.ts) ---
 
 // Caches a batch of flashcards fetched from GET /modules/:id/flashcards.
@@ -50,6 +62,7 @@ export async function insertOrReplaceFlashcards(
   flashcards: Array<{
     id: string
     module_id: string
+    conversation_id?: string | null
     front: string
     back: string
     created_at: string
@@ -66,9 +79,9 @@ export async function insertOrReplaceFlashcards(
     for (const card of flashcards) {
       await db.runAsync(
         `INSERT OR REPLACE INTO flashcards
-          (id, module_id, front, back, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [card.id, card.module_id, card.front, card.back, card.created_at],
+          (id, module_id, conversation_id, front, back, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [card.id, card.module_id, card.conversation_id || null, card.front, card.back, card.created_at],
       )
     }
   })
@@ -176,3 +189,29 @@ export async function markFlashcardProgressSynced(id: string): Promise<void> {
     id,
   ])
 }
+
+// Resets study progress (correct/incorrect counters) for all flashcards of a conversation
+export async function resetFlashcardProgressForConversation(
+  conversationId: string,
+): Promise<void> {
+  const db = await getDb()
+  await db.runAsync(
+    `DELETE FROM flashcard_progress WHERE flashcard_id IN (SELECT id FROM flashcards WHERE conversation_id = ?)`,
+    [conversationId],
+  )
+}
+
+// Deletes both compiled flashcards and their progress for a conversation
+export async function clearFlashcardsForConversation(
+  conversationId: string,
+): Promise<void> {
+  const db = await getDb()
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `DELETE FROM flashcard_progress WHERE flashcard_id IN (SELECT id FROM flashcards WHERE conversation_id = ?)`,
+      [conversationId],
+    )
+    await db.runAsync(`DELETE FROM flashcards WHERE conversation_id = ?`, [conversationId])
+  })
+}
+

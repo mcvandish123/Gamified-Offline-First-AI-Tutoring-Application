@@ -47,26 +47,27 @@ function toNotebook(mod: LocalModule): Notebook {
 // ─── Design Tokens ───────────────────────────────────────────────────────────
 
 const D = {
-  pageBg: '#F5F5F0',
+  pageBg: '#F2F4EF',
   headerBg: '#FFFFFF',
   cardBg: '#FFFFFF',
   tabBarBg: '#FFFFFF',
   green: '#5A8A1F',
   greenAdd: '#5A8A1F',
+  greenLight: '#EBF3DF',
   textPrimary: '#1A1A1A',
-  textSecondary: '#666666',
-  textMuted: '#999999',
+  textSecondary: '#6B7280',
+  textMuted: '#9CA3AF',
   textTabActive: '#5A8A1F',
   textTabInactive: '#888888',
-  cardBorder: '#E8E8E8',
-  dashedBorder: '#CCCCCC',
+  cardBorder: '#E5ECD9',
+  dashedBorder: '#C5D6A8',
   accentBar: '#6B9E1E',
   divider: '#EEEEEE',
   overlay: 'rgba(0,0,0,0.45)',
   pagePadH: 16,
-  cardPadH: 14,
-  cardPadV: 16,
-  cardRadius: 8,
+  cardPadH: 16,
+  cardPadV: 20,
+  cardRadius: 12,
   accentBarW: 4,
 } as const
 
@@ -221,12 +222,14 @@ function NotebookCard({ notebook, onPress }: NotebookCardProps) {
     <TouchableOpacity
       style={styles.card}
       onPress={() => onPress(notebook)}
-      activeOpacity={0.7}
+      activeOpacity={0.75}
     >
-      <View style={styles.cardAccentBar} />
-      <View style={styles.cardContent}>
+      {/* ── Title block (top) ── */}
+      <View style={styles.cardTop}>
         <View style={styles.cardTitleRow}>
-          <Text style={styles.cardTitle}>{notebook.name}</Text>
+          <Text style={styles.cardTitle} numberOfLines={2} ellipsizeMode="tail">
+            {notebook.name}
+          </Text>
           {!notebook.synced && (
             <View
               style={styles.pendingDot}
@@ -234,8 +237,12 @@ function NotebookCard({ notebook, onPress }: NotebookCardProps) {
             />
           )}
         </View>
-        <Text style={styles.cardSubtitle}>{notebook.chatCount} Chats</Text>
       </View>
+
+      {/* ── Metadata (bottom) ── */}
+      <Text style={styles.cardSubtitle}>
+        {notebook.chatCount} {notebook.chatCount === 1 ? 'Chat' : 'Chats'}
+      </Text>
     </TouchableOpacity>
   )
 }
@@ -247,7 +254,7 @@ function NewNotebookCard({ onPress }: { onPress: () => void }) {
       onPress={onPress}
       activeOpacity={0.7}
     >
-      <Text style={styles.newCardIcon}>+</Text>
+      <Text style={styles.newCardPlus}>+</Text>
       <Text style={styles.newCardLabel}>New Notebook</Text>
     </TouchableOpacity>
   )
@@ -565,83 +572,100 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  // Notebook list
-  notebookList: { gap: 10 },
+  // ── 2-column notebook grid ───────────────────────────────────────────────
+  notebookList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
   loadingState: {
     paddingVertical: 40,
     alignItems: 'center',
   },
 
-  // Notebook card
+  // ── Notebook card ────────────────────────────────────────────────────────
   card: {
-    flexDirection: 'row',
+    // Each card takes exactly half the row minus half the gap
+    width: '48%' as unknown as number,
+    flexDirection: 'column',
+    justifyContent: 'space-between',
     backgroundColor: D.cardBg,
     borderRadius: D.cardRadius,
-    overflow: 'hidden',
-    minHeight: 80,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
-      },
-      android: { elevation: 2 },
-    }),
-  },
-  cardAccentBar: {
-    width: D.accentBarW,
-    backgroundColor: D.accentBar,
-  },
-  cardContent: {
-    flex: 1,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    minHeight: 140,
     paddingHorizontal: D.cardPadH,
     paddingVertical: D.cardPadV,
-    justifyContent: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#2D4A0E',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.09,
+        shadowRadius: 12,
+      },
+      android: { elevation: 3 },
+    }),
+  },
+  cardTop: {
+    flex: 1,
   },
   cardTitleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 6,
-    marginBottom: 3,
   },
   cardTitle: {
-    fontSize: 15,
-    fontWeight: '600',
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
     color: D.textPrimary,
+    lineHeight: 22,
+    letterSpacing: -0.3,
   },
   pendingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
     backgroundColor: '#FFA500',
+    marginTop: 6,
+    flexShrink: 0,
   },
   cardSubtitle: {
-    fontSize: 12,
-    color: D.textSecondary,
+    marginTop: 16,
+    fontSize: 11,
+    fontWeight: '500',
+    color: D.textMuted,
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
   },
 
-  // New notebook dashed card
+  // ── New notebook dashed card ─────────────────────────────────────────────
   newCard: {
-    backgroundColor: D.cardBg,
+    width: '48%' as unknown as number,
+    minHeight: 140,
+    backgroundColor: '#FAFCF7',
     borderRadius: D.cardRadius,
     borderWidth: 1.5,
     borderColor: D.dashedBorder,
     borderStyle: 'dashed',
-    minHeight: 80,
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 6,
+    paddingVertical: D.cardPadV,
+    paddingHorizontal: D.cardPadH,
   },
-  newCardIcon: {
-    fontSize: 22,
-    color: D.textMuted,
-    lineHeight: 26,
+  newCardPlus: {
+    fontSize: 32,
+    lineHeight: 36,
+    fontWeight: '300',
+    color: D.green,
   },
   newCardLabel: {
     fontSize: 12,
-    color: D.textMuted,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: D.green,
+    textAlign: 'center',
   },
 
   // FAB

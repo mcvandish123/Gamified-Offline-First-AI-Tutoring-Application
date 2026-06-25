@@ -81,6 +81,34 @@ export async function initDb() {
       created_at TEXT
     );
 
+    -- Read-only cache of achievement DEFINITIONS (name, icon, the XP
+    -- threshold needed to unlock it, etc). This is the same global list
+    -- for every user, pulled from Supabase's public 'achievements' table.
+    CREATE TABLE IF NOT EXISTS achievements (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      icon_url TEXT,
+      xp_reward INTEGER DEFAULT 0,
+      condition_type TEXT,
+      condition_value INTEGER DEFAULT 0,
+      created_at TEXT
+    );
+
+    -- Read-only cache of which achievements THIS user has already
+    -- unlocked, and when. Unlike module_progress/flashcard_progress,
+    -- there's no "synced" flag here on purpose: the device never
+    -- decides an achievement is unlocked on its own (some conditions,
+    -- like boss battles won, depend on data that isn't cached
+    -- on-device). Rows only ever arrive here from a confirmed server
+    -- response — either a direct pull, or the "newlyUnlocked" list
+    -- returned when a queued flashcard/quiz answer gets synced.
+    CREATE TABLE IF NOT EXISTS user_achievements (
+      id TEXT PRIMARY KEY,
+      achievement_id TEXT NOT NULL,
+      unlocked_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS module_progress (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -100,6 +128,27 @@ export async function initDb() {
       times_seen INTEGER DEFAULT 0,
       last_seen_at TEXT,
       synced INTEGER DEFAULT 0
+    );
+
+    -- Local mirror of Supabase's user_progress table. Only ONE row ever
+    -- lives here (id is always the fixed string 'local' — see
+    -- db/user-progress.ts) because this app only supports one logged-in
+    -- user per device at a time. Holding a local copy is what lets the
+    -- XP bar / streak counter update INSTANTLY while offline, instead of
+    -- waiting for a round trip that can't happen until reconnecting.
+    -- synced = 0 means "this device has applied XP gains the server
+    -- doesn't know about yet"; it flips back to 1 the moment the queued
+    -- flashcard/quiz answers that earned that XP are pushed.
+    CREATE TABLE IF NOT EXISTS user_progress (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      total_xp INTEGER DEFAULT 0,
+      current_level INTEGER DEFAULT 1,
+      current_streak INTEGER DEFAULT 0,
+      longest_streak INTEGER DEFAULT 0,
+      last_active_date TEXT,
+      updated_at TEXT,
+      synced INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS conversations (

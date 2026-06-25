@@ -46,7 +46,14 @@ export class XpLogService {
       progress.current_streak,
     );
 
-    const { error: updateError } = await client
+    // .select().single() here (instead of just firing the update) so we get
+    // the fresh row back in the same round trip. The offline-sync client
+    // needs this: when it pushes a queued flashcard/quiz answer that was
+    // answered while offline, this is how it learns the *authoritative*
+    // total_xp/streak to overwrite its local optimistic guess with —
+    // without it, the client would need a second request just to ask
+    // "ok, what's my real total now?"
+    const { data: updatedProgress, error: updateError } = await client
       .from('user_progress')
       .update({
         total_xp: progress.total_xp + xpEarned,
@@ -55,11 +62,13 @@ export class XpLogService {
         last_active_date: today,
         updated_at: new Date().toISOString(),
       })
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .select()
+      .single();
 
     if (updateError) throw new BadRequestException(updateError.message);
 
-    return { success: true, logEntry };
+    return { success: true, logEntry, userProgress: updatedProgress };
   }
 
   // Compares the last active date to today to decide whether the streak

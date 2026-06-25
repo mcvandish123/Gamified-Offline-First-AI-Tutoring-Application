@@ -86,13 +86,38 @@ export class FlashcardsService {
     }
 
     // Only award XP for correct answers — small, simple rule for now
+    let xpAwarded = false;
     if (wasCorrect) {
       await this.xpLog.logXp(userId, 5, 'flashcard'); // 5 XP per correct flashcard
+      xpAwarded = true;
     }
 
-    // Check if this update unlocked any achievements
-    await this.achievements.checkAchievements(userId);
+    // Check if this update unlocked any achievements (these can ALSO
+    // add bonus XP on top of the flashcard XP above)
+    const achievementResult = await this.achievements.checkAchievements(userId);
 
-    return { success: true, progress: data };
+    // Only re-fetch user_progress if something could have actually
+    // changed it (a correct answer, or an achievement's XP bonus) — on
+    // a wrong answer with no unlock, skip the extra query entirely.
+    // We re-fetch fresh here (rather than trusting logXp's own return
+    // value) specifically because an achievement bonus, if any, is
+    // applied AFTER logXp runs — so logXp's number could be stale by
+    // that bonus amount.
+    let userProgress = null;
+    if (xpAwarded || achievementResult.newlyUnlocked.length > 0) {
+      const { data: freshProgress } = await client
+        .from('user_progress')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+      userProgress = freshProgress;
+    }
+
+    return {
+      success: true,
+      progress: data,
+      userProgress, // fresh total_xp/streak, or null if nothing changed
+      newlyUnlocked: achievementResult.newlyUnlocked, // [] if none
+    };
   }
 }

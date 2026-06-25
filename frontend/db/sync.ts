@@ -8,6 +8,22 @@ import {
 } from './conversations'
 import { upsertLocalResource } from '././resources'
 import { replaceConversationSources } from './conversation-sources'
+import {
+  getUnsyncedFlashcardProgress,
+  markFlashcardProgressSynced,
+  insertOrReplaceFlashcards,
+} from './flashcards'
+import { insertOrReplaceQuestions } from './questions'
+import {
+  getUnsyncedModuleProgress,
+  markModuleProgressSynced,
+} from './module-progress'
+import { overwriteFromServer } from './user-progress'
+import {
+  insertOrReplaceAchievements,
+  insertOrReplaceUnlockedAchievements,
+  recordLocalUnlock,
+} from './achievements'
 import { BACKEND_URL } from '../src/lib/api'
 
 async function pushUnsyncedChats() {
@@ -148,6 +164,104 @@ async function pushUnsyncedModules() {
   }
 }
 
+// Pushes flashcard answers recorded while offline (or recorded online
+// but not pushed yet) up to Supabase. Each successful push can return
+// two extra things beyond "saved ok": a fresh userProgress snapshot —
+// if that particular answer earned XP — and a list of achievements that
+// just got newly unlocked. Both get applied to the local cache right
+// away, so the gamification UI reflects the server's TRUE numbers
+// instead of just this device's optimistic guess.
+async function pushUnsyncedFlashcardProgress() {
+  const token = await getAccessToken()
+  const unsynced = await getUnsyncedFlashcardProgress()
+
+  if (unsynced.length === 0) return
+
+  for (const row of unsynced) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/flashcards/progress`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          flashcardId: row.flashcard_id,
+          wasCorrect: row.was_correct === 1,
+        }),
+      })
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '')
+        console.error(
+          `Failed to push flashcard progress ${row.id} (HTTP ${res.status}): ${errBody}`,
+        )
+        continue // leave synced = 0, retry next sync pass
+      }
+
+      const json = await res.json()
+      await markFlashcardProgressSynced(row.id)
+
+      // Reconcile the local optimistic XP guess with the real total.
+      if (json.userProgress) {
+        await overwriteFromServer(json.userProgress)
+      }
+      // Any achievement in here is now CONFIRMED by the server — safe
+      // to add to the local "unlocked" cache straight away.
+      for (const achievement of json.newlyUnlocked ?? []) {
+        await recordLocalUnlock(achievement)
+      }
+    } catch (err) {
+      console.error('Failed to push flashcard progress', row.id, err)
+    }
+  }
+}
+
+// Same idea as pushUnsyncedFlashcardProgress, but for whole-module
+// quiz/match results (PATCH /modules/:id/progress).
+async function pushUnsyncedModuleProgress() {
+  const token = await getAccessToken()
+  const unsynced = await getUnsyncedModuleProgress()
+
+  if (unsynced.length === 0) return
+
+  for (const row of unsynced) {
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/modules/${row.module_id}/progress`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ masteryScore: row.mastery_score }),
+        },
+      )
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '')
+        console.error(
+          `Failed to push module progress ${row.id} (HTTP ${res.status}): ${errBody}`,
+        )
+        continue
+      }
+
+      const json = await res.json()
+      await markModuleProgressSynced(row.id)
+
+      if (json.userProgress) {
+        await overwriteFromServer(json.userProgress)
+      }
+      for (const achievement of json.newlyUnlocked ?? []) {
+        await recordLocalUnlock(achievement)
+      }
+    } catch (err) {
+      console.error('Failed to push module progress', row.id, err)
+    }
+  }
+}
+
 async function pullModules() {
   const db = await getDb()
   const token = await getAccessToken()
@@ -188,6 +302,48 @@ async function pullModules() {
         mod.created_at,
       ],
     )
+  }
+}
+
+// Caches flashcards + questions for every module currently cached
+// locally, so the study/quiz/match screens can read them with ZERO
+// network calls — including with no connection at all. This is the
+// piece that actually makes offline flashcards/quizzes possible: it
+// only needs to run once while online per module, and after that the
+// content just sits in SQLite, ready any time.
+// Run after pullModules() so the module list is current first.
+async function pullFlashcardsAndQuestions() {
+  const db = await getDb()
+  const token = await getAccessToken()
+
+  const modules = await db.getAllAsync<{ id: string }>(`SELECT id FROM modules`)
+
+  for (const mod of modules) {
+    try {
+      // Fire both requests for a module at once rather than one after
+      // the other — they're independent, so there's no reason to make
+      // the device wait twice.
+      const [flashRes, quesRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/modules/${mod.id}/flashcards`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${BACKEND_URL}/modules/${mod.id}/questions`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
+
+      if (flashRes.ok) {
+        const json = await flashRes.json()
+        await insertOrReplaceFlashcards(json.flashcards ?? [])
+      }
+
+      if (quesRes.ok) {
+        const json = await quesRes.json()
+        await insertOrReplaceQuestions(json.questions ?? [])
+      }
+    } catch (err) {
+      console.error('pullFlashcardsAndQuestions failed for module', mod.id, err)
+    }
   }
 }
 
@@ -241,7 +397,9 @@ export async function getUnsyncedCount(): Promise<number> {
     `SELECT
       (SELECT COUNT(*) FROM modules WHERE synced = 0) +
       (SELECT COUNT(*) FROM conversations WHERE synced = 0) +
-      (SELECT COUNT(*) FROM module_chats WHERE synced = 0)
+      (SELECT COUNT(*) FROM module_chats WHERE synced = 0) +
+      (SELECT COUNT(*) FROM flashcard_progress WHERE synced = 0) +
+      (SELECT COUNT(*) FROM module_progress WHERE synced = 0)
       AS count`,
   )
   return row?.count ?? 0
@@ -312,6 +470,63 @@ async function pullResourcesAndSources() {
   }
 }
 
+// Pulls the AUTHORITATIVE total_xp/streak from the server and overwrites
+// the local optimistic copy. Deliberately run LAST in runSync() — after
+// the push steps above — so it reflects everything THIS device just
+// sent up, not a stale read from before the push.
+async function pullUserProgress() {
+  const token = await getAccessToken()
+
+  const res = await fetch(`${BACKEND_URL}/users/me/progress`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) return
+
+  const json = await res.json()
+  if (json.progress) {
+    await overwriteFromServer(json.progress)
+  }
+}
+
+// Caches the global achievement definitions (name, icon, XP reward, the
+// threshold needed to unlock it). Same list for every user, so a plain
+// refresh-on-every-sync is simple and cheap — there's no per-user state
+// to lose by overwriting.
+async function pullAchievementDefinitions() {
+  const token = await getAccessToken()
+
+  const res = await fetch(`${BACKEND_URL}/achievements`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) return
+
+  const json = await res.json()
+  await insertOrReplaceAchievements(json.achievements ?? [])
+}
+
+// Caches which achievements THIS user has unlocked. Run after
+// pullAchievementDefinitions() so the badges being reconciled here
+// already have their full definitions (name/icon/etc) cached locally.
+async function pullUnlockedAchievements() {
+  const token = await getAccessToken()
+
+  const res = await fetch(`${BACKEND_URL}/achievements/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) return
+
+  const json = await res.json()
+  // The server's response nests the achievement definition inside each
+  // row (achievements: {...}); we only need the unlock record itself
+  // here, since the definitions are cached separately above.
+  const unlocked = (json.achievements ?? []).map((u: any) => ({
+    id: u.id,
+    achievement_id: u.achievement_id,
+    unlocked_at: u.unlocked_at,
+  }))
+  await insertOrReplaceUnlockedAchievements(unlocked)
+}
+
 export async function runSync() {
   const token = await getAccessToken()
   if (!token) return // not logged in yet, nothing to sync
@@ -319,14 +534,23 @@ export async function runSync() {
   // Order matters: each push step can only succeed once its parent has a
   // real Supabase id. Modules must sync before conversations (conversations
   // reference module_id), and conversations must sync before chats
-  // (chats reference conversation_id).
+  // (chats reference conversation_id). Flashcard/module progress don't
+  // have that constraint — flashcards/questions are always pulled FROM
+  // the server in the first place, so their ids are already real.
   await pushUnsyncedModules()
   await pushUnsyncedConversations()
   await pushUnsyncedChats()
+  await pushUnsyncedFlashcardProgress()
+  await pushUnsyncedModuleProgress()
   try {
     await pullModules()
   } catch (err) {
     console.error('pullModules failed:', err)
+  }
+  try {
+    await pullFlashcardsAndQuestions()
+  } catch (err) {
+    console.error('pullFlashcardsAndQuestions failed:', err)
   }
   try {
     await pullConversations()
@@ -337,6 +561,24 @@ export async function runSync() {
     await pullResourcesAndSources()
   } catch (err) {
     console.error('pullResourcesAndSources failed:', err)
+  }
+  // These three run LAST, after every push above has had a chance to
+  // land — so the numbers they pull back reflect this device's own
+  // offline progress, not a snapshot from before it synced.
+  try {
+    await pullUserProgress()
+  } catch (err) {
+    console.error('pullUserProgress failed:', err)
+  }
+  try {
+    await pullAchievementDefinitions()
+  } catch (err) {
+    console.error('pullAchievementDefinitions failed:', err)
+  }
+  try {
+    await pullUnlockedAchievements()
+  } catch (err) {
+    console.error('pullUnlockedAchievements failed:', err)
   }
 }
 

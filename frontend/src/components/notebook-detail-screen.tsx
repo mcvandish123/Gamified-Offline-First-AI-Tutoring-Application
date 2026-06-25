@@ -27,7 +27,7 @@ import { BACKEND_URL } from '../lib/api'
 // Matches library-screen.tsx so the two screens feel like one app.
 
 const D = {
-  pageBg: '#F5F5F0',
+  pageBg: '#F2F4EF',
   headerBg: '#FFFFFF',
   cardBg: '#FFFFFF',
   tabBarBg: '#FFFFFF',
@@ -35,13 +35,14 @@ const D = {
   greenAdd: '#5A8A1F',
   textPrimary: '#1A1A1A',
   textSecondary: '#666666',
-  textMuted: '#999999',
+  textMuted: '#9CA3AF',
   textTabActive: '#5A8A1F',
-  textTabInactive: '#888888',
+  textTabInactive: '#94a3b8',
   cardBorder: '#E8E8E8',
   dashedBorder: '#CCCCCC',
   accentBar: '#6B9E1E',
   divider: '#EEEEEE',
+  tabDivider: '#E2E8F0',
   overlay: 'rgba(0,0,0,0.45)',
   pagePadH: 16,
   cardRadius: 8,
@@ -54,7 +55,7 @@ export interface NotebookSummary {
   name: string
 }
 
-type DetailTab = 'Chats' | 'Quizzes' | 'Flashcards' | 'Match'
+type DetailTab = 'Chats' | 'Quizzes' | 'Flashcards'
 
 // ─── Time formatting ──────────────────────────────────────────────────────────
 // Matches the design: "12 mins ago", "2 hours ago", "Yesterday", "Mar 24"
@@ -226,7 +227,7 @@ interface TabBarProps {
 }
 
 function DetailTabBar({ active, onChange }: TabBarProps) {
-  const tabs: DetailTab[] = ['Chats', 'Quizzes', 'Flashcards', 'Match']
+  const tabs: DetailTab[] = ['Chats', 'Quizzes', 'Flashcards']
   return (
     <View style={styles.detailTabBar}>
       {tabs.map((tab) => (
@@ -236,15 +237,18 @@ function DetailTabBar({ active, onChange }: TabBarProps) {
           onPress={() => onChange(tab)}
           activeOpacity={0.7}
         >
-          <Text
-            style={[
-              styles.detailTabLabel,
-              active === tab && styles.detailTabLabelActive,
-            ]}
-          >
-            {tab}
-          </Text>
-          {active === tab && <View style={styles.detailTabUnderline} />}
+          {/* Label + text-width underline sit inside a self-sizing column */}
+          <View style={styles.detailTabInner}>
+            <Text
+              style={[
+                styles.detailTabLabel,
+                active === tab && styles.detailTabLabelActive,
+              ]}
+            >
+              {tab}
+            </Text>
+            {active === tab && <View style={styles.detailTabUnderline} />}
+          </View>
         </TouchableOpacity>
       ))}
     </View>
@@ -605,30 +609,40 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Detail tab bar (segmented control under the New Chat button)
+  // Detail tab bar
   detailTabBar: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: D.divider,
+    borderBottomColor: D.tabDivider,
     marginBottom: 16,
   },
   detailTab: {
-    marginRight: 22,
+    flex: 1,
+    alignItems: 'center',
+    paddingBottom: 0,
+  },
+  // Inner column — shrinks to hug the label text width
+  detailTabInner: {
+    alignItems: 'center',
     paddingBottom: 10,
   },
   detailTabLabel: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: D.textTabInactive,
   },
   detailTabLabelActive: {
     color: D.green,
+    fontWeight: '600',
   },
+  // Underline sized to the text — alignSelf: 'stretch' fills the inner wrapper
+  // which is already shrink-wrapped to the label via alignItems: 'center'
   detailTabUnderline: {
-    marginTop: 8,
-    height: 2,
+    marginTop: 6,
+    height: 2.5,
+    width: '100%',
     backgroundColor: D.green,
-    borderRadius: 1,
+    borderRadius: 2,
   },
 
   // Section header ("RECENT CONVERSATIONS · Sorted by time")
@@ -640,12 +654,13 @@ const styles = StyleSheet.create({
   },
   sectionHeaderLabel: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '600',
     color: D.textMuted,
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   sectionHeaderMeta: {
     fontSize: 11,
+    fontWeight: '400',
     color: D.textMuted,
   },
 

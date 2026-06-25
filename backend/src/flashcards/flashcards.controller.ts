@@ -42,4 +42,18 @@ export class FlashcardsController {
       body.wasCorrect,
     );
   }
+
+  @Post('modules/:moduleId/conversations/:conversationId/flashcards/generate')
+  async generateFlashcards(
+    @Headers('authorization') authorization: string,
+    @Param('moduleId') moduleId: string,
+    @Param('conversationId') conversationId: string,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.flashcardsService.generateFlashcardsFromConversation(
+      userId,
+      moduleId,
+      conversationId,
+    );
+  }
 }

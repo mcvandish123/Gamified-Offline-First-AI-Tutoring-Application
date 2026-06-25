@@ -12,6 +12,8 @@ import {
   ActivityIndicator,
   Switch,
   Alert,
+  Animated,
+  Modal,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import NetInfo from '@react-native-community/netinfo'
@@ -33,6 +35,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { getAccessToken } from '../../db/auth-storage'
 import { BACKEND_URL } from '../lib/api'
+import {
+  getLocalFlashcardsForConversation,
+  upsertLocalFlashcardProgress,
+  type LocalFlashcard,
+} from '../../db/flashcards'
+
 
 // ─── Design Tokens ───────────────────────────────────────────────────────────
 const D = {
@@ -83,8 +91,26 @@ export default function ChatScreen({
   )
   const [sources, setSources] = useState<LocalConversationSource[]>([])
   const [sourcesLoading, setSourcesLoading] = useState(false)
+  const [isCompiling, setIsCompiling] = useState(false)
+  const [flashcardCount, setFlashcardCount] = useState(0)
+  const [practiceVisible, setPracticeVisible] = useState(false)
 
   const scrollViewRef = useRef<ScrollView>(null)
+
+  const loadFlashcardCount = useCallback(async (convId: string) => {
+    if (!convId || convId.startsWith('local-')) {
+      setFlashcardCount(0)
+      return
+    }
+    try {
+      const cards = await getLocalFlashcardsForConversation(convId)
+      setFlashcardCount(cards.length)
+    } catch (err) {
+      console.warn('Failed to load flashcard count:', err)
+      setFlashcardCount(0)
+    }
+  }, [])
+
 
   // Load and refresh conversation sources
   const loadSources = useCallback(
@@ -130,7 +156,9 @@ export default function ChatScreen({
 
   useEffect(() => {
     loadSources(currentConversationId)
-  }, [currentConversationId, loadSources])
+    loadFlashcardCount(currentConversationId)
+  }, [currentConversationId, loadSources, loadFlashcardCount])
+
 
   const handleAddSource = async (resourceId: string) => {
     if (currentConversationId.startsWith('local-')) return
@@ -328,6 +356,7 @@ export default function ChatScreen({
 
       // Pull fresh messages from backend if online
       await pullLatestMessages()
+      await loadFlashcardCount(currentConversationId)
     }
     loadChats()
 
@@ -341,7 +370,67 @@ export default function ChatScreen({
       }
     })
     return () => unsubscribe()
-  }, [notebook.id, currentConversationId, isOffline, pullLatestMessages])
+  }, [notebook.id, currentConversationId, isOffline, pullLatestMessages, loadFlashcardCount])
+
+
+  const handleCompileFlashcards = async () => {
+    if (currentConversationId.startsWith('local-')) {
+      Alert.alert(
+        'Hold on',
+        'Please send at least one message to sync this conversation before compiling flashcards.',
+      )
+      return
+    }
+    if (isOffline) {
+      Alert.alert(
+        'You\u2019re offline',
+        'Compiling flashcards requires an internet connection.',
+      )
+      return
+    }
+
+    setIsCompiling(true)
+    try {
+      const token = await getAccessToken()
+      const res = await fetch(
+        `${BACKEND_URL}/modules/${notebook.id}/conversations/${currentConversationId}/flashcards/generate`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      )
+
+      if (!res.ok) {
+        const errMsg = await res.text()
+        throw new Error(errMsg || 'Failed to compile flashcards')
+      }
+
+      const json = await res.json()
+      // Now run sync to pull the newly created flashcards from the server!
+      const { runSync } = await import('../../db/sync')
+      await runSync()
+
+      await loadFlashcardCount(currentConversationId)
+
+      Alert.alert(
+        'Success!',
+        `Generated ${json.flashcards?.length ?? 0} flashcards from this chat. Would you like to practice them now?`,
+        [
+          { text: 'Maybe Later', style: 'cancel' },
+          { text: 'Practice Now', onPress: () => setPracticeVisible(true) },
+        ],
+      )
+    } catch (err: any) {
+      console.error('Error generating flashcards:', err)
+      Alert.alert('Error', err.message || 'Could not compile flashcards. Please try again.')
+    } finally {
+      setIsCompiling(false)
+    }
+  }
+
 
   // Handle send message
   const handleSend = async () => {
@@ -716,6 +805,44 @@ export default function ChatScreen({
                 />
                 <Text style={styles.actionBtnText}>Study</Text>
               </TouchableOpacity>
+              {messages.some((m) => m.role === 'assistant') && (
+                <TouchableOpacity
+                  style={[styles.actionBtn, { marginLeft: 12 }]}
+                  onPress={handleCompileFlashcards}
+                  disabled={isCompiling || isOffline}
+                >
+                  {isCompiling ? (
+                    <ActivityIndicator size="small" color={D.green} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name="albums-outline"
+                        size={18}
+                        color={isOffline ? D.textMuted : D.green}
+                      />
+                      <Text
+                        style={[
+                          styles.actionBtnText,
+                          { color: isOffline ? D.textMuted : D.green, marginLeft: 4 },
+                        ]}
+                      >
+                        Compile Cards
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+              {flashcardCount > 0 && (
+                <TouchableOpacity
+                  style={[styles.actionBtn, { marginLeft: 12 }]}
+                  onPress={() => setPracticeVisible(true)}
+                >
+                  <Ionicons name="play-circle-outline" size={18} color={D.green} />
+                  <Text style={[styles.actionBtnText, { color: D.green, marginLeft: 4 }]}>
+                    Practice ({flashcardCount})
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
             <TouchableOpacity
               onPress={handleSend}
@@ -758,7 +885,342 @@ export default function ChatScreen({
           <Text style={styles.tabLabel}>Settings</Text>
         </TouchableOpacity>
       </View>
+      <PracticeModal
+        visible={practiceVisible}
+        conversationId={currentConversationId}
+        conversationTitle={conversation.title}
+        onClose={() => {
+          setPracticeVisible(false)
+          loadFlashcardCount(currentConversationId)
+        }}
+      />
     </View>
+  )
+}
+
+// ─── Practice Modal Component ──────────────────────────────────────────────
+interface PracticeModalProps {
+  visible: boolean
+  conversationId: string
+  conversationTitle: string
+  onClose: () => void
+}
+
+function PracticeModal({
+  visible,
+  conversationId,
+  conversationTitle,
+  onClose,
+}: PracticeModalProps) {
+  const [flashcards, setFlashcards] = useState<LocalFlashcard[]>([])
+  const [loading, setLoading] = useState(true)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [isFlipped, setIsFlipped] = useState(false)
+  const [correctCount, setCorrectCount] = useState(0)
+  const [incorrectCount, setIncorrectCount] = useState(0)
+  const [completed, setCompleted] = useState(false)
+
+  const flipAnim = useRef(new Animated.Value(0)).current
+
+  const loadCards = useCallback(async () => {
+    if (!conversationId || conversationId.startsWith('local-')) return
+    setLoading(true)
+    try {
+      const cards = await getLocalFlashcardsForConversation(conversationId)
+      setFlashcards(cards)
+      setCurrentIndex(0)
+      setIsFlipped(false)
+      setCorrectCount(0)
+      setIncorrectCount(0)
+      setCompleted(false)
+      flipAnim.setValue(0)
+    } catch (err) {
+      console.error('Failed to load conversation flashcards:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [conversationId, flipAnim])
+
+  useEffect(() => {
+    if (visible) {
+      loadCards()
+    }
+  }, [visible, loadCards])
+
+  const handleFlip = () => {
+    if (isFlipped) {
+      Animated.spring(flipAnim, {
+        toValue: 0,
+        friction: 8,
+        tension: 10,
+        useNativeDriver: Platform.OS !== 'web',
+      }).start()
+    } else {
+      Animated.spring(flipAnim, {
+        toValue: 180,
+        friction: 8,
+        tension: 10,
+        useNativeDriver: Platform.OS !== 'web',
+      }).start()
+    }
+    setIsFlipped(!isFlipped)
+  }
+
+  const handleAnswer = async (wasCorrect: boolean) => {
+    const currentCard = flashcards[currentIndex]
+    if (!currentCard) return
+
+    if (wasCorrect) {
+      setCorrectCount((prev) => prev + 1)
+    } else {
+      setIncorrectCount((prev) => prev + 1)
+    }
+
+    try {
+      await upsertLocalFlashcardProgress({
+        flashcardId: currentCard.id,
+        wasCorrect,
+      })
+      const { runSync } = await import('../../db/sync')
+      runSync().catch((err: any) => console.error('Sync progress error:', err))
+    } catch (err) {
+      console.error('Failed to save flashcard progress:', err)
+    }
+
+    if (currentIndex + 1 < flashcards.length) {
+      if (isFlipped) {
+        Animated.timing(flipAnim, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: Platform.OS !== 'web',
+        }).start(() => {
+          setIsFlipped(false)
+          setCurrentIndex((prev) => prev + 1)
+        })
+      } else {
+        setCurrentIndex((prev) => prev + 1)
+      }
+    } else {
+      setCompleted(true)
+    }
+  }
+
+  const handleRestart = () => {
+    setCurrentIndex(0)
+    setIsFlipped(false)
+    setCorrectCount(0)
+    setIncorrectCount(0)
+    setCompleted(false)
+    flipAnim.setValue(0)
+  }
+
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <View style={styles.modalLoadingState}>
+          <ActivityIndicator color={D.green} size="large" />
+        </View>
+      )
+    }
+
+    if (flashcards.length === 0) {
+      return (
+        <View style={styles.modalEmptyStateContainer}>
+          <View style={styles.modalEmptyStateIconCircle}>
+            <Ionicons name="albums-outline" size={32} color={D.textSecondary} />
+          </View>
+          <Text style={styles.modalEmptyStateTitle}>No Flashcards yet</Text>
+          <Text style={styles.modalEmptyStateDescription}>
+            Compile cards from your conversation with the AI tutor first to practice here.
+          </Text>
+          <TouchableOpacity style={styles.modalBtnCloseFull} onPress={onClose}>
+            <Text style={styles.modalBtnCloseFullText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      )
+    }
+
+    if (completed) {
+      const total = flashcards.length
+      const accuracy = Math.round((correctCount / total) * 100)
+
+      return (
+        <View style={styles.modalCompletedContainer}>
+          <View style={styles.modalCelebrationCircle}>
+            <Ionicons name="trophy" size={44} color="#EAB308" />
+          </View>
+          <Text style={styles.modalCompletedTitle}>Round Complete!</Text>
+          <Text style={styles.modalCompletedSubtitle}>
+            You've reviewed all compiled flashcards for this chat.
+          </Text>
+
+          <View style={styles.modalStatsGrid}>
+            <View style={styles.modalStatBox}>
+              <Text style={styles.modalStatValue}>{total}</Text>
+              <Text style={styles.modalStatLabel}>Reviewed</Text>
+            </View>
+            <View style={styles.modalStatBox}>
+              <Text style={[styles.modalStatValue, { color: accuracy >= 70 ? D.green : '#E11D48' }]}>
+                {accuracy}%
+              </Text>
+              <Text style={styles.modalStatLabel}>Accuracy</Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 12, width: '100%', marginTop: 8 }}>
+            <TouchableOpacity style={[styles.modalBtnPrimary, { flex: 1 }]} onPress={handleRestart}>
+              <Text style={styles.modalBtnPrimaryText}>Practice Again</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.modalBtnPrimary,
+                { flex: 1, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
+              ]}
+              onPress={onClose}
+            >
+              <Text style={[styles.modalBtnPrimaryText, { color: D.textSecondary }]}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )
+    }
+
+    const currentCard = flashcards[currentIndex]
+    const total = flashcards.length
+
+    const frontInterpolate = flipAnim.interpolate({
+      inputRange: [0, 180],
+      outputRange: ['0deg', '180deg'],
+    })
+    const backInterpolate = flipAnim.interpolate({
+      inputRange: [0, 180],
+      outputRange: ['180deg', '360deg'],
+    })
+
+    const frontAnimatedStyle = {
+      transform: [{ rotateY: frontInterpolate }],
+    }
+    const backAnimatedStyle = {
+      transform: [{ rotateY: backInterpolate }],
+    }
+
+    return (
+      <View style={styles.modalGameWrapper}>
+        <View style={styles.modalProgressHeader}>
+          <View style={styles.modalProgressTextRow}>
+            <Text style={styles.modalProgressCount}>
+              Card {currentIndex + 1} of {total}
+            </Text>
+          </View>
+          <View style={styles.modalProgressBarBg}>
+            <View
+              style={[
+                styles.modalProgressBarFill,
+                { width: `${((currentIndex + 1) / total) * 100}%` },
+              ]}
+            />
+          </View>
+        </View>
+
+        <TouchableOpacity
+          activeOpacity={0.95}
+          onPress={handleFlip}
+          style={styles.modalCardTouchArea}
+        >
+          <View style={styles.modalCardContainer}>
+            <Animated.View
+              style={[
+                styles.modalFlashcard,
+                frontAnimatedStyle,
+                isFlipped ? { opacity: 0 } : { opacity: 1 },
+              ]}
+            >
+              <View style={styles.modalCardHeader}>
+                <Text style={styles.modalCardSideLabel}>QUESTION</Text>
+                <Ionicons name="help-circle-outline" size={20} color={D.green} />
+              </View>
+              <ScrollView
+                contentContainerStyle={styles.modalCardTextScroll}
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.modalCardTextFront}>{currentCard.front}</Text>
+              </ScrollView>
+              <Text style={styles.modalCardActionHint}>Tap card to reveal answer</Text>
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.modalFlashcard,
+                styles.modalFlashcardBack,
+                backAnimatedStyle,
+                isFlipped ? { opacity: 1 } : { opacity: 0 },
+              ]}
+            >
+              <View style={styles.modalCardHeader}>
+                <Text style={[styles.modalCardSideLabel, { color: '#EAB308' }]}>ANSWER</Text>
+                <Ionicons name="bulb-outline" size={20} color="#EAB308" />
+              </View>
+              <ScrollView
+                contentContainerStyle={styles.modalCardTextScroll}
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.modalCardTextBack}>{currentCard.back}</Text>
+              </ScrollView>
+              <Text style={styles.modalCardActionHint}>Tap card to show question</Text>
+            </Animated.View>
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.modalControlsRow}>
+          <TouchableOpacity
+            style={[styles.modalBtnAnswer, styles.modalBtnIncorrect]}
+            onPress={() => handleAnswer(false)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="close-circle-outline" size={20} color="#E11D48" />
+            <Text style={styles.modalBtnIncorrectText}>Review</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.modalBtnAnswer, styles.modalBtnCorrect]}
+            onPress={() => handleAnswer(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="checkmark-circle-outline" size={20} color={D.green} />
+            <Text style={styles.modalBtnCorrectText}>Got It!</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={styles.modalFullscreenOverlay}>
+        <View style={styles.modalPracticeContainer}>
+          {/* Header */}
+          <View style={styles.modalPracticeHeader}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.modalPracticeTitle}>Practice Session</Text>
+              <Text style={styles.modalPracticeSubtitle} numberOfLines={1}>
+                {conversationTitle}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={styles.modalPracticeCloseBtn}>
+              <Ionicons name="close" size={24} color={D.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Content */}
+          <View style={styles.modalPracticeContent}>{renderContent()}</View>
+        </View>
+      </SafeAreaView>
+    </Modal>
   )
 }
 
@@ -1026,7 +1488,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
     padding: 0,
     textAlignVertical: 'top',
-    ...Platform.select({ web: { outlineStyle: 'none' } }),
+    ...Platform.select({ web: { outlineStyle: 'none' as any } }),
   },
   inputActionsRow: {
     flexDirection: 'row',
@@ -1079,4 +1541,318 @@ const styles = StyleSheet.create({
     color: D.green,
     fontWeight: '700',
   },
+  // Modal styles for practice game
+  modalFullscreenOverlay: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  modalPracticeContainer: {
+    flex: 1,
+  },
+  modalPracticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: D.border,
+    backgroundColor: '#FFFFFF',
+  },
+  modalPracticeTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: D.textPrimary,
+  },
+  modalPracticeSubtitle: {
+    fontSize: 12,
+    color: D.textSecondary,
+    marginTop: 2,
+  },
+  modalPracticeCloseBtn: {
+    padding: 4,
+  },
+  modalPracticeContent: {
+    flex: 1,
+    padding: 16,
+  },
+  modalLoadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalEmptyStateContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: D.border,
+    gap: 16,
+    marginVertical: 40,
+  },
+  modalEmptyStateIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#F4F5F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalEmptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: D.textPrimary,
+  },
+  modalEmptyStateDescription: {
+    fontSize: 14,
+    color: D.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  modalBtnCloseFull: {
+    backgroundColor: D.green,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  modalBtnCloseFullText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  modalCompletedContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: D.border,
+    gap: 16,
+    paddingVertical: 40,
+  },
+  modalCelebrationCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#FEF9C3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FDE047',
+  },
+  modalCompletedTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: D.textPrimary,
+  },
+  modalCompletedSubtitle: {
+    fontSize: 14,
+    color: D.textSecondary,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  modalStatsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+    marginBottom: 8,
+  },
+  modalStatBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  modalStatValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: D.textPrimary,
+    marginBottom: 2,
+  },
+  modalStatLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: D.textMuted,
+  },
+  modalBtnPrimary: {
+    backgroundColor: D.green,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: D.green,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+      },
+      android: { elevation: 2 },
+    }),
+  },
+  modalBtnPrimaryText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  modalGameWrapper: {
+    flex: 1,
+    paddingTop: 8,
+    gap: 16,
+  },
+  modalProgressHeader: {
+    gap: 8,
+  },
+  modalProgressTextRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalProgressCount: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: D.textSecondary,
+  },
+  modalProgressBarBg: {
+    height: 8,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  modalProgressBarFill: {
+    height: '100%',
+    backgroundColor: D.green,
+    borderRadius: 4,
+  },
+  modalCardTouchArea: {
+    flex: 1,
+    minHeight: 280,
+    marginVertical: 12,
+  },
+  modalCardContainer: {
+    width: '100%',
+    height: '100%',
+  },
+  modalFlashcard: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: D.border,
+    padding: 20,
+    backfaceVisibility: 'hidden',
+    justifyContent: 'space-between',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+      },
+      android: { elevation: 3 },
+      web: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+      },
+    }),
+  },
+  modalFlashcardBack: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderColor: '#FEF08A',
+  },
+  modalCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: D.border,
+    paddingBottom: 8,
+    marginBottom: 12,
+  },
+  modalCardSideLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: D.green,
+    letterSpacing: 1,
+  },
+  modalCardTextScroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCardTextFront: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: D.textPrimary,
+    textAlign: 'center',
+    lineHeight: 26,
+  },
+  modalCardTextBack: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: D.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  modalCardActionHint: {
+    fontSize: 12,
+    color: D.textMuted,
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
+  modalControlsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+    paddingBottom: Platform.OS === 'ios' ? 10 : 0,
+  },
+  modalBtnAnswer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  modalBtnIncorrect: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+  },
+  modalBtnIncorrectText: {
+    color: '#E11D48',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  modalBtnCorrect: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#DCFCE7',
+  },
+  modalBtnCorrectText: {
+    color: D.green,
+    fontWeight: '700',
+    fontSize: 15,
+  },
 })
+

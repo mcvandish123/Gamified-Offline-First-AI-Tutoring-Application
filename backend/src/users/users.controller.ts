@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { SupabaseService } from '../supabase.service';
+import { extractUserPayload } from '../extract-user-id';
 
 class UpdateProfileDto {
   username?: string;
@@ -23,11 +24,12 @@ export class UsersController {
   ) {}
 
   private async getUserId(authorization: string): Promise<string> {
-    const token = authorization?.replace('Bearer ', '');
-    if (!token) throw new UnauthorizedException('No token provided');
-    const { data, error } = await this.supabase.getClient().auth.getUser(token);
-    if (error || !data.user) throw new UnauthorizedException('Invalid token');
-    return data.user.id;
+    const payload = extractUserPayload(authorization);
+    const userId = payload.sub;
+    const email = payload.email || '';
+    const username = payload.user_metadata?.username || '';
+    await this.supabase.ensureUserExists(userId, email, username);
+    return userId;
   }
 
   @Get('me')

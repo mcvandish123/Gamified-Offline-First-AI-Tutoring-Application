@@ -233,3 +233,21 @@ export async function initDb() {
 
   return database
 }
+
+export async function resetDb() {
+  const database = await getDb()
+  await database.execAsync(`
+    DELETE FROM modules;
+    DELETE FROM flashcards;
+    DELETE FROM questions;
+    DELETE FROM achievements;
+    DELETE FROM user_achievements;
+    DELETE FROM module_progress;
+    DELETE FROM flashcard_progress;
+    DELETE FROM user_progress;
+    DELETE FROM conversations;
+    DELETE FROM module_chats;
+    DELETE FROM resources;
+    DELETE FROM conversation_sources;
+  `)
+}

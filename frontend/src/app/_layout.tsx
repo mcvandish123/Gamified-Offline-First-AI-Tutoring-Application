@@ -14,7 +14,7 @@ import NotebookDetailScreen from '@/components/notebook-detail-screen'
 import ChatScreen from '@/components/chat-screen'
 import SettingsScreen, { type UserProfile } from '@/components/settings-screen'
 import EditProfileScreen from '@/components/edit-profile-screen'
-import { initDb } from '../../db'
+import { initDb, resetDb } from '../../db'
 import { runSync, startSyncListener } from '../../db/sync'
 
 type Screen = 'library' | 'notebook' | 'settings' | 'editProfile' | 'chat'
@@ -76,7 +76,15 @@ export default function TabLayout() {
       return (
         <SettingsScreen
           onBack={() => setScreen('library')}
-          onSignOut={() => {
+          onSignOut={async () => {
+            try {
+              await resetDb()
+            } catch (err) {
+              console.error('Failed to reset local DB on sign out:', err)
+            }
+            setSelectedNotebook(null)
+            setSelectedConversation(null)
+            setProfile(null)
             setIsAuthenticated(false)
             setScreen('library')
           }}

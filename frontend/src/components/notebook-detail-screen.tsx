@@ -23,6 +23,8 @@ import {
   type ConversationWithPreview,
 } from '../../db/conversations'
 import { getLocalFlashcards, upsertLocalFlashcardProgress, type LocalFlashcard } from '../../db/flashcards'
+import { getLocalQuestions, type LocalQuestion } from '../../db/questions'
+import { getLocalModuleProgress, upsertLocalModuleProgress } from '../../db/module-progress'
 import { getAccessToken } from '../../db/auth-storage'
 import { runSync } from '../../db/sync'
 import { BACKEND_URL } from '../lib/api'
@@ -806,6 +808,426 @@ function FlashcardGameSection({ moduleId, conversations }: FlashcardGameSectionP
   )
 }
 
+interface QuizGameSectionProps {
+  moduleId: string
+  conversations: ConversationWithPreview[]
+}
+
+function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
+  const [questions, setQuestions] = useState<LocalQuestion[]>([])
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy')
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null)
+  const [isAnswerSubmitted, setIsAnswerSubmitted] = useState(false)
+  const [score, setScore] = useState(0)
+  const [completed, setCompleted] = useState(false)
+  const [moduleProgress, setModuleProgress] = useState<any>(null)
+
+  const loadProgressAndQuiz = useCallback(async () => {
+    setLoading(true)
+    try {
+      const prog = await getLocalModuleProgress(moduleId)
+      setModuleProgress(prog)
+      const allQuestions = await getLocalQuestions(moduleId)
+      setQuestions(allQuestions)
+    } catch (err) {
+      console.error('Failed to load quiz progress/questions:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [moduleId])
+
+  useEffect(() => {
+    loadProgressAndQuiz()
+  }, [loadProgressAndQuiz])
+
+  const activeQuestions = React.useMemo(() => {
+    return questions.filter((q) => q.difficulty === selectedDifficulty)
+  }, [questions, selectedDifficulty])
+
+  const handleGenerateQuiz = async () => {
+    setGenerating(true)
+    try {
+      const token = await getAccessToken()
+      const res = await fetch(
+        `${BACKEND_URL}/modules/${moduleId}/questions/generate`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ difficulty: selectedDifficulty }),
+        },
+      )
+
+      if (!res.ok) {
+        const errMsg = await res.text()
+        throw new Error(errMsg || 'Failed to generate quiz')
+      }
+
+      const json = await res.json()
+      // Run sync to pull the newly created questions from the server!
+      const { runSync } = await import('../../db/sync')
+      await runSync()
+
+      // Reload questions and progress from local database
+      await loadProgressAndQuiz()
+
+      Alert.alert(
+        'Success!',
+        `Generated ${json.questions?.length ?? 0} questions for this difficulty level. Ready to test?`,
+      )
+    } catch (err: any) {
+      console.error('Error generating quiz:', err)
+      Alert.alert('Error', err.message || 'Could not generate quiz. Please try again.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleStartQuiz = () => {
+    if (activeQuestions.length === 0) return
+    setCurrentIndex(0)
+    setSelectedAnswer(null)
+    setIsAnswerSubmitted(false)
+    setScore(0)
+    setCompleted(false)
+    setIsPlaying(true)
+  }
+
+  const handleOptionPress = (option: string) => {
+    if (isAnswerSubmitted) return
+    setSelectedAnswer(option)
+  }
+
+  const handleSubmitAnswer = () => {
+    if (!selectedAnswer || isAnswerSubmitted) return
+    setIsAnswerSubmitted(true)
+    const currentQ = activeQuestions[currentIndex]
+    if (selectedAnswer === currentQ.correct_answer) {
+      setScore((prev) => prev + 1)
+    }
+  }
+
+  const handleNext = async () => {
+    if (currentIndex + 1 < activeQuestions.length) {
+      setCurrentIndex((prev) => prev + 1)
+      setSelectedAnswer(null)
+      setIsAnswerSubmitted(false)
+    } else {
+      // Completed! Save progress
+      setIsPlaying(false)
+      setCompleted(true)
+      
+      const finalScore = score + (selectedAnswer === activeQuestions[currentIndex].correct_answer ? 1 : 0)
+      const masteryScore = finalScore / activeQuestions.length
+      
+      try {
+        const { progress, justCompleted } = await upsertLocalModuleProgress({
+          moduleId,
+          masteryScore,
+        })
+        setModuleProgress(progress)
+        
+        if (justCompleted) {
+          Alert.alert(
+            'Incredible!',
+            'You have mastered this module! +50 XP Awarded (will sync to profile).',
+          )
+        }
+      } catch (err) {
+        console.error('Failed to save quiz progress:', err)
+      }
+    }
+  }
+
+  const handleRestart = () => {
+    setCurrentIndex(0)
+    setSelectedAnswer(null)
+    setIsAnswerSubmitted(false)
+    setScore(0)
+    setCompleted(false)
+    setIsPlaying(true)
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loadingState}>
+        <ActivityIndicator color={D.green} />
+      </View>
+    )
+  }
+
+  if (generating) {
+    return (
+      <View style={styles.completedContainer}>
+        <ActivityIndicator size="large" color={D.green} style={{ marginBottom: 16 }} />
+        <Text style={styles.completedTitle}>Generating Quiz...</Text>
+        <Text style={styles.completedSubtitle}>
+          AI is reading your notebook resource texts to design 5 multiple-choice questions. This will take a few moments.
+        </Text>
+      </View>
+    )
+  }
+
+  if (completed) {
+    const total = activeQuestions.length
+    const finalScore = score
+    const accuracy = Math.round((finalScore / total) * 100)
+
+    return (
+      <View style={styles.completedContainer}>
+        <View style={styles.celebrationCircle}>
+          <Ionicons name="trophy" size={44} color="#EAB308" />
+        </View>
+        <Text style={styles.completedTitle}>Quiz Finished!</Text>
+        <Text style={styles.completedSubtitle}>
+          Difficulty: {selectedDifficulty.toUpperCase()}
+        </Text>
+
+        <View style={styles.statsGrid}>
+          <View style={styles.statBox}>
+            <Text style={styles.statValue}>{finalScore} / {total}</Text>
+            <Text style={styles.statLabel}>Score</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={[styles.statValue, { color: accuracy >= 80 ? D.green : '#E11D48' }]}>
+              {accuracy}%
+            </Text>
+            <Text style={styles.statLabel}>Accuracy</Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 12, width: '100%', marginTop: 8 }}>
+          <TouchableOpacity style={[styles.btnPrimary, { flex: 1 }]} onPress={handleRestart}>
+            <Text style={styles.btnPrimaryText}>Retake Quiz</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.btnPrimary, { flex: 1, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' }]}
+            onPress={() => {
+              setCompleted(false)
+              setIsPlaying(false)
+            }}
+          >
+            <Text style={[styles.btnPrimaryText, { color: D.textSecondary }]}>Difficulty Select</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
+  }
+
+  if (isPlaying) {
+    const currentQ = activeQuestions[currentIndex]
+    const total = activeQuestions.length
+    let parsedChoices: string[] = []
+    try {
+      if (currentQ.choices) {
+        parsedChoices = typeof currentQ.choices === 'string' ? JSON.parse(currentQ.choices) : currentQ.choices
+      }
+    } catch (e) {
+      console.error('Failed to parse options choices:', e)
+    }
+
+    return (
+      <View style={styles.gameWrapper}>
+        <View style={styles.progressHeader}>
+          <View style={styles.progressTextRow}>
+            <TouchableOpacity
+              style={styles.backToDecksBtn}
+              onPress={() => setIsPlaying(false)}
+            >
+              <Ionicons name="chevron-back" size={14} color={D.textSecondary} />
+              <Text style={styles.backToDecksText}>Exit Quiz</Text>
+            </TouchableOpacity>
+            <Text style={styles.progressCount}>
+              Question {currentIndex + 1} of {total}
+            </Text>
+          </View>
+          <View style={styles.progressBarBg}>
+            <View
+              style={[
+                styles.progressBarFill,
+                { width: `${((currentIndex + 1) / total) * 100}%` },
+              ]}
+            />
+          </View>
+        </View>
+
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 12 }} showsVerticalScrollIndicator={false}>
+          <View style={styles.quizQuestionCard}>
+            <Text style={styles.quizQuestionText}>{currentQ.question_text}</Text>
+          </View>
+
+          <View style={styles.quizChoicesContainer}>
+            {parsedChoices.map((choice, i) => {
+              const isSelected = selectedAnswer === choice
+              const isCorrect = choice === currentQ.correct_answer
+              
+              let choiceStyle: any[] = [styles.quizChoiceCard]
+              let choiceTextStyle: any[] = [styles.quizChoiceText]
+              let rightIcon = null
+
+              if (isAnswerSubmitted) {
+                if (isCorrect) {
+                  choiceStyle.push(styles.quizChoiceCardCorrect)
+                  choiceTextStyle.push(styles.quizChoiceTextCorrect)
+                  rightIcon = <Ionicons name="checkmark-circle" size={18} color="#15803D" />
+                } else if (isSelected) {
+                  choiceStyle.push(styles.quizChoiceCardIncorrect)
+                  choiceTextStyle.push(styles.quizChoiceTextIncorrect)
+                  rightIcon = <Ionicons name="close-circle" size={18} color="#B91C1C" />
+                } else {
+                  choiceStyle.push(styles.quizChoiceCardDisabled)
+                }
+              } else if (isSelected) {
+                choiceStyle.push(styles.quizChoiceCardSelected)
+                choiceTextStyle.push(styles.quizChoiceTextSelected)
+              }
+
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={choiceStyle}
+                  onPress={() => handleOptionPress(choice)}
+                  activeOpacity={0.8}
+                  disabled={isAnswerSubmitted}
+                >
+                  <Text style={choiceTextStyle}>{choice}</Text>
+                  {rightIcon}
+                </TouchableOpacity>
+              )
+            })}
+          </View>
+        </ScrollView>
+
+        <View style={styles.quizActionsRow}>
+          {!isAnswerSubmitted ? (
+            <TouchableOpacity
+              style={[styles.btnPrimary, !selectedAnswer ? styles.btnPrimaryDisabled : null]}
+              onPress={handleSubmitAnswer}
+              disabled={!selectedAnswer}
+            >
+              <Text style={styles.btnPrimaryText}>Submit Answer</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.btnPrimary}
+              onPress={handleNext}
+            >
+              <Text style={styles.btnPrimaryText}>
+                {currentIndex + 1 === total ? 'Finish Quiz' : 'Next Question'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    )
+  }
+
+  // Selection view (difficulty selectors & details)
+  const count = activeQuestions.length
+
+  return (
+    <View style={styles.selectionContainer}>
+      <Text style={styles.selectionTitle}>Choose Quiz Difficulty</Text>
+      <Text style={styles.selectionSubtitle}>
+        AI will generate multiple choice questions tailored to your current notebook documents.
+      </Text>
+
+      <View style={styles.difficultySelectionRow}>
+        {(['easy', 'medium', 'hard'] as const).map((diff) => {
+          const isSelected = selectedDifficulty === diff
+          const btnStyle: any[] = [
+            styles.difficultyBtn,
+            isSelected && styles.difficultyBtnSelected,
+            isSelected && diff === 'easy' && { borderColor: D.green, backgroundColor: '#ECFDF5' },
+            isSelected && diff === 'medium' && { borderColor: '#EAB308', backgroundColor: '#FEF9C3' },
+            isSelected && diff === 'hard' && { borderColor: '#EF4444', backgroundColor: '#FEE2E2' },
+          ]
+          const labelStyle: any[] = [
+            styles.difficultyLabel,
+            isSelected && { fontWeight: 'bold' as const },
+            isSelected && diff === 'easy' && { color: D.green },
+            isSelected && diff === 'medium' && { color: '#A16207' },
+            isSelected && diff === 'hard' && { color: '#B91C1C' },
+          ]
+
+          return (
+            <TouchableOpacity
+              key={diff}
+              style={btnStyle}
+              onPress={() => setSelectedDifficulty(diff)}
+              activeOpacity={0.7}
+            >
+              <Text style={labelStyle}>{diff.toUpperCase()}</Text>
+            </TouchableOpacity>
+          )
+        })}
+      </View>
+
+      <View style={styles.difficultyDescriptionBox}>
+        {selectedDifficulty === 'easy' && (
+          <>
+            <Text style={styles.diffDescTitle}>🟢 Easy Level</Text>
+            <Text style={styles.diffDescText}>
+              Simple factual recall, core definitions, and basic terminology based directly on the module notes. Recommended for getting started.
+            </Text>
+          </>
+        )}
+        {selectedDifficulty === 'medium' && (
+          <>
+            <Text style={styles.diffDescTitle}>🟡 Medium Level</Text>
+            <Text style={styles.diffDescText}>
+              Conceptual understanding, comparing ideas, and basic application logic. Test if you understand *how* concepts tie together.
+            </Text>
+          </>
+        )}
+        {selectedDifficulty === 'hard' && (
+          <>
+            <Text style={styles.diffDescTitle}>🔴 Hard Level</Text>
+            <Text style={styles.diffDescText}>
+              Deep analysis, synthesis, evaluation, and solving complex scenarios derived from the material. Designed to push your knowledge limits!
+            </Text>
+          </>
+        )}
+
+        <View style={styles.progressStatusContainer}>
+          <Text style={styles.progressStatusText}>
+            Current Module Mastery: <Text style={{ fontWeight: 'bold', color: D.green }}>{Math.round((moduleProgress?.mastery_score ?? 0) * 100)}%</Text>
+          </Text>
+          <Text style={styles.progressStatusText}>
+            Times Quiz Taken: <Text style={{ fontWeight: 'bold' }}>{moduleProgress?.times_reviewed ?? 0}</Text>
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.quizStartActions}>
+        {count > 0 ? (
+          <>
+            <TouchableOpacity style={styles.btnPrimary} onPress={handleStartQuiz}>
+              <Text style={styles.btnPrimaryText}>Start Quiz ({count} Questions)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.btnPrimary, { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#CBD5E1', marginTop: 12 }]}
+              onPress={handleGenerateQuiz}
+            >
+              <Text style={[styles.btnPrimaryText, { color: D.textSecondary }]}>Regenerate AI Quiz</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity style={styles.btnPrimary} onPress={handleGenerateQuiz}>
+            <Text style={styles.btnPrimaryText}>Generate Quiz with AI</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  )
+}
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 interface NotebookDetailScreenProps {
@@ -998,11 +1420,7 @@ export default function NotebookDetailScreen({
           ) : activeTab === 'Flashcards' ? (
             <FlashcardGameSection moduleId={notebook.id} conversations={conversations} />
           ) : (
-            <View style={styles.comingSoon}>
-              <Text style={styles.comingSoonText}>
-                {activeTab} coming soon.
-              </Text>
-            </View>
+            <QuizGameSection moduleId={notebook.id} conversations={conversations} />
           )}
 
           <View style={{ height: 40 }} />
@@ -1785,5 +2203,141 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontStyle: 'italic',
     paddingHorizontal: 8,
+  },
+  // Quiz Styles
+  difficultySelectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginVertical: 16,
+  },
+  difficultyBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  difficultyBtnSelected: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  difficultyLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: D.textSecondary,
+  },
+  difficultyDescriptionBox: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    borderRadius: D.cardRadius,
+    padding: 16,
+    marginBottom: 20,
+  },
+  diffDescTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: D.textPrimary,
+    marginBottom: 8,
+  },
+  diffDescText: {
+    fontSize: 13,
+    color: D.textSecondary,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  progressStatusContainer: {
+    borderTopWidth: 1,
+    borderColor: D.divider,
+    paddingTop: 12,
+    marginTop: 4,
+    gap: 6,
+  },
+  progressStatusText: {
+    fontSize: 12,
+    color: D.textSecondary,
+  },
+  quizStartActions: {
+    width: '100%',
+    marginTop: 8,
+  },
+  quizQuestionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: D.cardRadius,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    padding: 20,
+    marginBottom: 16,
+    minHeight: 100,
+    justifyContent: 'center',
+  },
+  quizQuestionText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: D.textPrimary,
+    lineHeight: 22,
+  },
+  quizChoicesContainer: {
+    gap: 10,
+    marginBottom: 20,
+  },
+  quizChoiceCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: D.cardRadius,
+    borderWidth: 1,
+    borderColor: D.cardBorder,
+    padding: 16,
+  },
+  quizChoiceCardSelected: {
+    borderColor: D.green,
+    backgroundColor: '#F7FEE7',
+  },
+  quizChoiceCardCorrect: {
+    borderColor: '#22C55E',
+    backgroundColor: '#DCFCE7',
+  },
+  quizChoiceCardIncorrect: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEE2E2',
+  },
+  quizChoiceCardDisabled: {
+    opacity: 0.6,
+  },
+  quizChoiceText: {
+    fontSize: 14,
+    color: D.textPrimary,
+    fontWeight: '500',
+    flex: 1,
+    marginRight: 8,
+  },
+  quizChoiceTextSelected: {
+    color: '#3F6212',
+    fontWeight: '700',
+  },
+  quizChoiceTextCorrect: {
+    color: '#166534',
+    fontWeight: '700',
+  },
+  quizChoiceTextIncorrect: {
+    color: '#991B1B',
+    fontWeight: '700',
+  },
+  quizActionsRow: {
+    width: '100%',
+    paddingVertical: 8,
+  },
+  btnPrimaryDisabled: {
+    backgroundColor: D.textMuted,
+    opacity: 0.7,
   },
 })

@@ -826,6 +826,7 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
   const [score, setScore] = useState(0)
   const [completed, setCompleted] = useState(false)
   const [moduleProgress, setModuleProgress] = useState<any>(null)
+  const [shouldStartQuiz, setShouldStartQuiz] = useState(false)
 
   const loadProgressAndQuiz = useCallback(async () => {
     setLoading(true)
@@ -856,6 +857,19 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
     }
     return filtered.filter((q) => q.difficulty === selectedDifficulty)
   }, [questions, selectedConversationId, selectedDifficulty])
+
+  // Automatically start the quiz when the state is set and questions are loaded
+  useEffect(() => {
+    if (shouldStartQuiz && activeQuestions.length > 0) {
+      setShouldStartQuiz(false)
+      setCurrentIndex(0)
+      setSelectedAnswer(null)
+      setIsAnswerSubmitted(false)
+      setScore(0)
+      setCompleted(false)
+      setIsPlaying(true)
+    }
+  }, [shouldStartQuiz, activeQuestions])
 
   const handleGenerateQuiz = async () => {
     if (!selectedConversationId) return
@@ -893,6 +907,14 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
       Alert.alert(
         'Success!',
         `Generated ${json.questions?.length ?? 0} questions for this difficulty level. Ready to test?`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setShouldStartQuiz(true)
+            }
+          }
+        ]
       )
     } catch (err: any) {
       console.error('Error generating quiz:', err)

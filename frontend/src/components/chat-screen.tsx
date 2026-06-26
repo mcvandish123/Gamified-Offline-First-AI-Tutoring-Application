@@ -540,8 +540,13 @@ export default function ChatScreen({
 
         // Store both user and assistant messages in local SQLite as synced
         await insertLocalChat({
-          ...newUserMsg,
+          id: json.userMessage.id,
+          module_id: notebook.id,
           conversation_id: activeConvId,
+          user_id: json.userMessage.user_id,
+          role: 'user',
+          content: json.userMessage.content,
+          created_at: json.userMessage.created_at,
           synced: 1,
         })
         await insertLocalChat({

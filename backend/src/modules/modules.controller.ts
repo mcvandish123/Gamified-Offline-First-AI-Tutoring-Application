@@ -3,12 +3,14 @@ import {
   Get,
   Post,
   Delete,
+  Patch,
   Body,
   Param,
   Headers,
 } from '@nestjs/common';
 import { ModulesService } from './modules.service';
 import { SupabaseService } from '../supabase.service';
+import { extractUserPayload } from '../extract-user-id';
 
 class SyncChatsDto {
   messages!: {
@@ -44,10 +46,12 @@ export class ModulesController {
   ) {}
 
   private async getUserId(authorization: string): Promise<string> {
-    const token = authorization?.replace('Bearer ', '');
-    const { data, error } = await this.supabase.getClient().auth.getUser(token);
-    if (error) throw new Error('Unauthorized');
-    return data.user.id;
+    const payload = extractUserPayload(authorization);
+    const userId = payload.sub;
+    const email = payload.email || '';
+    const username = payload.user_metadata?.username || '';
+    await this.supabase.ensureUserExists(userId, email, username);
+    return userId;
   }
 
   @Get()
@@ -72,6 +76,16 @@ export class ModulesController {
   ) {
     const userId = await this.getUserId(authorization);
     return this.modulesService.deleteModule(userId, id);
+  }
+
+  @Patch(':id')
+  async update(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+    @Body() body: CreateModuleDto,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.updateModule(userId, id, body.title);
   }
 
   @Get(':id')

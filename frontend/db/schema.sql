@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS flashcards (
 CREATE TABLE IF NOT EXISTS questions (
   id TEXT PRIMARY KEY,
   module_id TEXT NOT NULL,
+  conversation_id TEXT,
   question_text TEXT NOT NULL,
   correct_answer TEXT NOT NULL,
   difficulty TEXT DEFAULT 'easy',

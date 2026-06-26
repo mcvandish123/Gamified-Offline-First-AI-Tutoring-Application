@@ -13,14 +13,17 @@ import {
   TextInput,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Alert,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import {
   getLocalModules,
   insertLocalModule,
   markModuleSynced,
+  deleteLocalModule,
   type LocalModule,
 } from '../../db/modules'
+import { getDb } from '../../db/index'
 import { getAccessToken } from '../../db/auth-storage'
 import { runSync, getUnsyncedCount } from '../../db/sync'
 import { BACKEND_URL } from '../lib/api'
@@ -172,6 +175,144 @@ function NewNotebookModal({
   )
 }
 
+interface ManageNotebookModalProps {
+  visible: boolean
+  notebook: Notebook | null
+  isRenaming: boolean
+  isDeleting: boolean
+  renameText: string
+  setRenameText: (t: string) => void
+  setIsRenaming: (r: boolean) => void
+  setIsDeleting: (d: boolean) => void
+  onClose: () => void
+  onRename: (newName: string) => void
+  onDelete: () => void
+}
+
+function ManageNotebookModal({
+  visible,
+  notebook,
+  isRenaming,
+  isDeleting,
+  renameText,
+  setRenameText,
+  setIsRenaming,
+  setIsDeleting,
+  onClose,
+  onRename,
+  onDelete,
+}: ManageNotebookModalProps) {
+  if (!notebook) return null
+
+  return (
+    <Modal
+      animationType="fade"
+      transparent={true}
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={onClose}
+      >
+        <View style={styles.modalCard} onStartShouldSetResponder={() => true}>
+          {isRenaming ? (
+            <View style={{ width: '100%' }}>
+              <Text style={styles.manageModalTitle}>Rename Notebook</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Notebook Name"
+                placeholderTextColor={D.textMuted}
+                value={renameText}
+                onChangeText={setRenameText}
+                autoFocus
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalBtnCancel}
+                  onPress={() => setIsRenaming(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.modalBtnCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.modalBtnCreate}
+                  onPress={() => onRename(renameText)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.modalBtnCreateText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : isDeleting ? (
+            <View style={{ width: '100%', alignItems: 'center' }}>
+              <View style={styles.alertIconBg}>
+                <Ionicons name="alert-circle" size={32} color="#EF4444" />
+              </View>
+              <Text style={[styles.manageModalTitle, { marginTop: 12 }]}>Delete Notebook?</Text>
+              <Text style={styles.confirmDeleteText}>
+                Are you sure you want to delete "{notebook.name}"? This action cannot be undone and will delete all associated chats, flashcards, and quizzes.
+              </Text>
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalBtnCancel}
+                  onPress={() => setIsDeleting(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.modalBtnCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtnCreate, { backgroundColor: '#EF4444' }]}
+                  onPress={onDelete}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.modalBtnCreateText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={{ width: '100%' }}>
+              <Text style={styles.notebookMenuTitle} numberOfLines={1}>{notebook.name}</Text>
+              <Text style={styles.notebookMenuSubtitle}>Notebook Settings</Text>
+              
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setRenameText(notebook.name)
+                  setIsRenaming(true)
+                }}
+              >
+                <Ionicons name="create-outline" size={20} color={D.green} style={{ marginRight: 10 }} />
+                <Text style={styles.menuItemText}>Rename Notebook</Text>
+              </TouchableOpacity>
+
+              <View style={styles.menuDivider} />
+
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => setIsDeleting(true)}
+              >
+                <Ionicons name="trash-outline" size={20} color="#EF4444" style={{ marginRight: 10 }} />
+                <Text style={[styles.menuItemText, { color: '#EF4444' }]}>Delete Notebook</Text>
+              </TouchableOpacity>
+
+              <View style={styles.menuDivider} />
+
+              <TouchableOpacity
+                style={[styles.menuItem, { justifyContent: 'center', marginTop: 4 }]}
+                onPress={onClose}
+              >
+                <Text style={[styles.menuItemText, { color: D.textSecondary, fontWeight: '600', marginLeft: 0 }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  )
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 interface TopBarProps {
@@ -215,13 +356,15 @@ function TopBar({ syncing, pendingCount, onSyncPress }: TopBarProps) {
 interface NotebookCardProps {
   notebook: Notebook
   onPress: (notebook: Notebook) => void
+  onLongPress: (notebook: Notebook) => void
 }
 
-function NotebookCard({ notebook, onPress }: NotebookCardProps) {
+function NotebookCard({ notebook, onPress, onLongPress }: NotebookCardProps) {
   return (
     <TouchableOpacity
       style={styles.card}
       onPress={() => onPress(notebook)}
+      onLongPress={() => onLongPress(notebook)}
       activeOpacity={0.75}
     >
       {/* ── Title block (top) ── */}
@@ -340,6 +483,12 @@ export default function LibraryScreen({
   const [syncing, setSyncing] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
 
+  // Long-press Notebook management states
+  const [manageNotebook, setManageNotebook] = useState<Notebook | null>(null)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [renameText, setRenameText] = useState('')
+
   // Reads the current local cache and reflects it in state. SQLite is the
   // single source of truth the UI renders from — both the offline-created
   // rows (synced = 0) and rows pulled down from Supabase live here.
@@ -435,6 +584,73 @@ export default function LibraryScreen({
     }
   }
 
+  const handleRename = async (id: string, newName: string) => {
+    if (!newName.trim()) {
+      Alert.alert('Error', 'Please enter a notebook name.')
+      return
+    }
+
+    try {
+      const db = await getDb()
+      // 1. Update SQLite local cache immediately, mark synced = 0 (dirty)
+      await db.runAsync(
+        `UPDATE modules SET title = ?, synced = 0 WHERE id = ?`,
+        [newName.trim(), id]
+      )
+      await refreshFromLocal()
+
+      // 2. If it is a synced server module, send PATCH request to server
+      if (!id.startsWith('local-')) {
+        const token = await getAccessToken()
+        const res = await fetch(`${BACKEND_URL}/modules/${id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ title: newName.trim() }),
+        })
+        if (res.ok) {
+          await db.runAsync(`UPDATE modules SET synced = 1 WHERE id = ?`, [id])
+          await refreshFromLocal()
+        } else {
+          console.warn('Failed to rename module on server:', res.status)
+        }
+      }
+    } catch (err) {
+      console.error('Error renaming module:', err)
+      Alert.alert('Error', 'Could not rename notebook. Please try again.')
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    try {
+      // 1. Delete locally first (adds server modules to deleted_modules queue)
+      await deleteLocalModule(id)
+      await refreshFromLocal()
+
+      // 2. If it is a synced server module, delete on server
+      if (!id.startsWith('local-')) {
+        const token = await getAccessToken()
+        const res = await fetch(`${BACKEND_URL}/modules/${id}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
+        if (res.ok || res.status === 404) {
+          const db = await getDb()
+          await db.runAsync(`DELETE FROM deleted_modules WHERE id = ?`, [id])
+        } else {
+          console.warn('Failed to delete module on server:', res.status)
+        }
+      }
+    } catch (err) {
+      console.error('Error deleting module:', err)
+      Alert.alert('Error', 'Could not delete notebook. Please try again.')
+    }
+  }
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={D.headerBg} />
@@ -443,6 +659,36 @@ export default function LibraryScreen({
         visible={modalVisible}
         onClose={() => setModalVisible(false)}
         onCreate={handleCreate}
+      />
+
+      <ManageNotebookModal
+        visible={manageNotebook !== null}
+        notebook={manageNotebook}
+        isRenaming={isRenaming}
+        isDeleting={isDeleting}
+        renameText={renameText}
+        setRenameText={setRenameText}
+        setIsRenaming={setIsRenaming}
+        setIsDeleting={setIsDeleting}
+        onClose={() => {
+          setManageNotebook(null)
+          setIsRenaming(false)
+          setIsDeleting(false)
+        }}
+        onRename={(newName) => {
+          if (manageNotebook) {
+            handleRename(manageNotebook.id, newName)
+            setManageNotebook(null)
+            setIsRenaming(false)
+          }
+        }}
+        onDelete={() => {
+          if (manageNotebook) {
+            handleDelete(manageNotebook.id)
+            setManageNotebook(null)
+            setIsDeleting(false)
+          }
+        }}
       />
 
       <SafeAreaView
@@ -478,6 +724,7 @@ export default function LibraryScreen({
                   key={nb.id}
                   notebook={nb}
                   onPress={(n) => onNotebookPress?.(n)}
+                  onLongPress={(n) => setManageNotebook(n)}
                 />
               ))}
               <NewNotebookCard onPress={() => setModalVisible(true)} />
@@ -773,7 +1020,7 @@ const styles = StyleSheet.create({
     color: D.textPrimary,
     backgroundColor: '#F8FAFC',
     marginBottom: 6,
-    ...Platform.select({ web: { outlineStyle: 'none' } }),
+    ...Platform.select({ web: { outlineStyle: 'none' as any } }),
   },
   modalInputError: {
     borderColor: '#FCA5A5',
@@ -814,5 +1061,60 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  notebookMenuTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: D.textPrimary,
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  notebookMenuSubtitle: {
+    fontSize: 12,
+    color: D.textSecondary,
+    textAlign: 'center',
+    marginBottom: 16,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  menuItemText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: D.textPrimary,
+    marginLeft: 10,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 4,
+  },
+  manageModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: D.textPrimary,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  confirmDeleteText: {
+    fontSize: 14,
+    color: D.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  alertIconBg: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#FEF2F2',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 })

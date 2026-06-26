@@ -4,6 +4,7 @@ import { SupabaseService } from '../supabase.service';
 
 class GenerateQuestionsDto {
   difficulty!: string;
+  conversationId?: string;
 }
 
 @Controller()
@@ -49,6 +50,7 @@ export class QuestionsController {
       userId,
       moduleId,
       body.difficulty,
+      body.conversationId,
     );
   }
 }

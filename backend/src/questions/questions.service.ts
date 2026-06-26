@@ -58,6 +58,7 @@ export class QuestionsService {
     userId: string,
     moduleId: string,
     difficulty: string,
+    conversationId?: string,
   ) {
     const client = this.supabase.getClient();
 
@@ -76,31 +77,50 @@ export class QuestionsService {
     // 2. Fetch resource content or conversation history to extract knowledge
     let sourceMaterial = '';
 
-    if (moduleData.resource_id) {
-      const { data: resource, error: resError } = await client
-        .from('resources')
-        .select('title, raw_text')
-        .eq('id', moduleData.resource_id)
-        .single();
-      if (!resError && resource) {
-        sourceMaterial += `[Resource title: ${resource.title}]\n${resource.raw_text || ''}\n\n`;
-      }
-    }
-
-    // Check module chat history if resource is not sufficient or empty
-    if (!sourceMaterial.trim()) {
-      const { data: chats } = await client
+    if (conversationId) {
+      // Fetch messages in this conversation
+      const { data: chats, error: chatsError } = await client
         .from('module_chats')
         .select('role, content')
-        .eq('module_id', moduleId)
+        .eq('conversation_id', conversationId)
         .eq('user_id', userId)
         .order('created_at', { ascending: true })
-        .limit(40);
+        .limit(50);
 
-      if (chats && chats.length > 0) {
-        sourceMaterial += `[Chat history study guide]\n` + chats
-          .map((c) => `${c.role === 'user' ? 'Student' : 'AI Tutor'}: ${c.content}`)
-          .join('\n');
+      if (chatsError || !chats || chats.length === 0) {
+        throw new BadRequestException('No messages found in this conversation to generate a quiz.');
+      }
+
+      sourceMaterial += `[Conversation history study guide]\n` + chats
+        .map((c) => `${c.role === 'user' ? 'Student' : 'AI Tutor'}: ${c.content}`)
+        .join('\n');
+    } else {
+      if (moduleData.resource_id) {
+        const { data: resource, error: resError } = await client
+          .from('resources')
+          .select('title, raw_text')
+          .eq('id', moduleData.resource_id)
+          .single();
+        if (!resError && resource) {
+          sourceMaterial += `[Resource title: ${resource.title}]\n${resource.raw_text || ''}\n\n`;
+        }
+      }
+
+      // Check module chat history if resource is not sufficient or empty
+      if (!sourceMaterial.trim()) {
+        const { data: chats } = await client
+          .from('module_chats')
+          .select('role, content')
+          .eq('module_id', moduleId)
+          .eq('user_id', userId)
+          .order('created_at', { ascending: true })
+          .limit(40);
+
+        if (chats && chats.length > 0) {
+          sourceMaterial += `[Chat history study guide]\n` + chats
+            .map((c) => `${c.role === 'user' ? 'Student' : 'AI Tutor'}: ${c.content}`)
+            .join('\n');
+        }
       }
     }
 
@@ -207,12 +227,20 @@ Example output:
       throw new BadRequestException('No questions could be extracted from these study materials.');
     }
 
-    // 5. Delete existing questions for this difficulty + module
-    const { error: deleteError } = await client
+    // 5. Delete existing questions for this difficulty + module + conversation
+    const deleteQuery = client
       .from('questions')
       .delete()
       .eq('module_id', moduleId)
       .eq('difficulty', validDifficulty);
+
+    if (conversationId) {
+      deleteQuery.eq('conversation_id', conversationId);
+    } else {
+      deleteQuery.is('conversation_id', null);
+    }
+
+    const { error: deleteError } = await deleteQuery;
 
     if (deleteError) {
       console.warn('Failed to delete old questions, proceeding with insertion:', deleteError.message);
@@ -223,6 +251,7 @@ Example output:
     const questionsToInsert = rawQuestions.map((q) => ({
       id: randomUUID(),
       module_id: moduleId,
+      conversation_id: conversationId || null,
       question_text: q.question_text,
       correct_answer: q.correct_answer,
       difficulty: validDifficulty,
@@ -231,13 +260,29 @@ Example output:
       created_at: now,
     }));
 
-    const { data: insertedQuestions, error: insertError } = await client
+    let insertedQuestions: any[] = [];
+    const { data: insertedData, error: insertError } = await client
       .from('questions')
       .insert(questionsToInsert)
       .select();
 
     if (insertError) {
-      throw new BadRequestException(`Failed to save generated quiz: ${insertError.message}`);
+      // Fallback: If conversation_id doesn't exist yet on the remote database, retry without it
+      if (insertError.message.includes('conversation_id') || insertError.code === '42703') {
+        console.warn('Supabase questions table missing conversation_id column. Retrying insert without it.');
+        const fallbackInsert = questionsToInsert.map(({ conversation_id, ...rest }) => rest);
+        const { data: retryData, error: retryError } = await client
+          .from('questions')
+          .insert(fallbackInsert)
+          .select();
+
+        if (retryError) throw new BadRequestException(retryError.message);
+        insertedQuestions = retryData ?? [];
+      } else {
+        throw new BadRequestException(`Failed to save generated quiz: ${insertError.message}`);
+      }
+    } else {
+      insertedQuestions = insertedData ?? [];
     }
 
     return {

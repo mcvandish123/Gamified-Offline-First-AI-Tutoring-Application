@@ -10,6 +10,7 @@ import { FlashcardsModule } from './flashcards/flashcards.module';
 import { QuestionsModule } from './questions/questions.module';
 import { AchievementsModule } from './achievements/achievements.module';
 import { XpLogModule } from './xp-log/xp-log.module';
+import { ProgressModule } from './progress/progress.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { XpLogModule } from './xp-log/xp-log.module';
     QuestionsModule,
     AchievementsModule,
     XpLogModule,
+    ProgressModule,
   ],
   controllers: [AppController],
   providers: [AppService],

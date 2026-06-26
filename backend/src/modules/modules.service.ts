@@ -92,6 +92,22 @@ export class ModulesService {
     return { success: true, message: 'Module deleted' };
   }
 
+  async updateModule(userId: string, moduleId: string, title: string) {
+    const client = this.supabase.getClient();
+
+    const { data, error } = await client
+      .from('modules')
+      .update({ title })
+      .eq('id', moduleId)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) throw new BadRequestException(error.message);
+
+    return { success: true, module: data };
+  }
+
   async getOne(userId: string, moduleId: string) {
     const client = this.supabase.getClient();
 

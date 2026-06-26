@@ -11,7 +11,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ResourcesService } from './resources.service';
 import { SupabaseService } from '../supabase.service';
-import { extractUserId } from '../extract-user-id';
+import { extractUserPayload } from '../extract-user-id';
 
 @Controller('resources')
 export class ResourcesController {
@@ -20,8 +20,13 @@ export class ResourcesController {
     private supabase: SupabaseService,
   ) {}
 
-  private getUserId(authorization: string): string {
-    return extractUserId(authorization);
+  private async getUserId(authorization: string): Promise<string> {
+    const payload = extractUserPayload(authorization);
+    const userId = payload.sub;
+    const email = payload.email || '';
+    const username = payload.user_metadata?.username || '';
+    await this.supabase.ensureUserExists(userId, email, username);
+    return userId;
   }
 
   @Get(':id')
@@ -29,7 +34,7 @@ export class ResourcesController {
     @Headers('authorization') authorization: string,
     @Param('id') id: string,
   ) {
-    const userId = this.getUserId(authorization);
+    const userId = await this.getUserId(authorization);
     return this.resourcesService.getOne(userId, id);
   }
 
@@ -40,7 +45,7 @@ export class ResourcesController {
     @UploadedFile() file: any,
     @Body('mimeType') mimeType: string,
   ) {
-    const userId = this.getUserId(authorization);
+    const userId = await this.getUserId(authorization);
     return this.resourcesService.uploadResource(
       userId,
       file.buffer,
@@ -54,7 +59,7 @@ export class ResourcesController {
     @Headers('authorization') authorization: string,
     @Param('id') id: string,
   ) {
-    const userId = this.getUserId(authorization);
+    const userId = await this.getUserId(authorization);
     return this.resourcesService.generateModules(userId, id);
   }
 }

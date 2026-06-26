@@ -64,6 +64,23 @@ export async function initDb() {
     console.error('Flashcards migration check failed:', err)
   }
 
+  // Migration: Add conversation_id column to questions if it doesn't exist
+  try {
+    const columns = await database.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(questions)',
+    )
+    const hasConvId = columns.some((c) => c.name === 'conversation_id')
+    if (columns.length > 0 && !hasConvId) {
+      console.log('Migrating questions table to add conversation_id column...')
+      await database.execAsync(`
+        ALTER TABLE questions ADD COLUMN conversation_id TEXT;
+      `)
+      console.log('Migration of questions completed successfully!')
+    }
+  } catch (err) {
+    console.error('Questions migration check failed:', err)
+  }
+
   await database.execAsync(`
     PRAGMA journal_mode = WAL;
 
@@ -91,6 +108,7 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS questions (
       id TEXT PRIMARY KEY,
       module_id TEXT NOT NULL,
+      conversation_id TEXT,
       question_text TEXT NOT NULL,
       correct_answer TEXT NOT NULL,
       difficulty TEXT DEFAULT 'easy',
@@ -206,7 +224,30 @@ export async function initDb() {
       resource_id TEXT NOT NULL,
       added_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS deleted_modules (
+      id TEXT PRIMARY KEY,
+      deleted_at TEXT
+    );
   `)
 
   return database
+}
+
+export async function resetDb() {
+  const database = await getDb()
+  await database.execAsync(`
+    DELETE FROM modules;
+    DELETE FROM flashcards;
+    DELETE FROM questions;
+    DELETE FROM achievements;
+    DELETE FROM user_achievements;
+    DELETE FROM module_progress;
+    DELETE FROM flashcard_progress;
+    DELETE FROM user_progress;
+    DELETE FROM conversations;
+    DELETE FROM module_chats;
+    DELETE FROM resources;
+    DELETE FROM conversation_sources;
+  `)
 }

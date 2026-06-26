@@ -126,10 +126,41 @@ async function pushUnsyncedConversations() {
   }
 }
 
-// Pushes notebooks (modules) that were created while offline to Supabase.
-// Each local row was inserted with synced = 0 and a client-generated id;
-// once Supabase confirms the insert, the local row is replaced with the
-// authoritative server row (which has the real Supabase id) and synced = 1.
+// Pushes module deletions that occurred while offline.
+async function pushUnsyncedDeletions() {
+  const db = await getDb()
+  const token = await getAccessToken()
+
+  const rows = await db.getAllAsync<{ id: string }>(`SELECT id FROM deleted_modules`)
+  if (rows.length === 0) return
+
+  for (const row of rows) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/modules/${row.id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (res.ok || res.status === 404) {
+        await db.runAsync(`DELETE FROM deleted_modules WHERE id = ?`, [row.id])
+      } else {
+        const errBody = await res.text().catch(() => '')
+        console.error(
+          `Failed to sync deletion for module ${row.id} (HTTP ${res.status}): ${errBody}`,
+        )
+      }
+    } catch (err) {
+      console.error('Failed to push deletion for module', row.id, err)
+    }
+  }
+}
+
+// Pushes notebooks (modules) that were created or renamed/updated while offline to Supabase.
+// Each local row was inserted with synced = 0.
+// If the ID is client-generated (starts with "local-"), we POST to /modules to create it.
+// If the ID is a real server ID, we PATCH to /modules/:id to update it.
 async function pushUnsyncedModules() {
   const token = await getAccessToken()
   const unsynced = await getUnsyncedModules()
@@ -138,25 +169,47 @@ async function pushUnsyncedModules() {
 
   for (const mod of unsynced) {
     try {
-      const res = await fetch(`${BACKEND_URL}/modules`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ title: mod.title }),
-      })
+      if (mod.id.startsWith('local-')) {
+        const res = await fetch(`${BACKEND_URL}/modules`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ title: mod.title }),
+        })
 
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => '')
-        console.error(
-          `Failed to push module ${mod.id} (HTTP ${res.status}): ${errBody}`,
-        )
-        continue // leave synced = 0, retry on next sync pass
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => '')
+          console.error(
+            `Failed to push module ${mod.id} (HTTP ${res.status}): ${errBody}`,
+          )
+          continue // leave synced = 0, retry on next sync pass
+        }
+
+        const json = await res.json()
+        await markModuleSynced(mod.id, json.module)
+      } else {
+        const res = await fetch(`${BACKEND_URL}/modules/${mod.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ title: mod.title }),
+        })
+
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => '')
+          console.error(
+            `Failed to sync module rename ${mod.id} (HTTP ${res.status}): ${errBody}`,
+          )
+          continue // leave synced = 0, retry on next sync pass
+        }
+
+        const db = await getDb()
+        await db.runAsync(`UPDATE modules SET synced = 1 WHERE id = ?`, [mod.id])
       }
-
-      const json = await res.json()
-      await markModuleSynced(mod.id, json.module)
     } catch (err) {
       // Network dropped mid-push — leave this row queued, move on to the rest
       console.error('Failed to push module', mod.id, err)
@@ -278,7 +331,13 @@ async function pullModules() {
 
   const json = await res.json()
 
+  // Fetch all pending deleted module IDs to prevent re-inserting them
+  const deletedRows = await db.getAllAsync<{ id: string }>(`SELECT id FROM deleted_modules`)
+  const deletedIds = new Set(deletedRows.map((r) => r.id))
+
   for (const mod of json.modules ?? []) {
+    if (deletedIds.has(mod.id)) continue
+
     // Don't clobber a row that's still queued to be pushed (synced = 0) —
     // it hasn't reached Supabase yet, so it can't be in this server list
     // under the same id anyway, but guard against any id collision.
@@ -527,58 +586,71 @@ async function pullUnlockedAchievements() {
   await insertOrReplaceUnlockedAchievements(unlocked)
 }
 
-export async function runSync() {
-  const token = await getAccessToken()
-  if (!token) return // not logged in yet, nothing to sync
+let isSyncing = false
 
-  // Order matters: each push step can only succeed once its parent has a
-  // real Supabase id. Modules must sync before conversations (conversations
-  // reference module_id), and conversations must sync before chats
-  // (chats reference conversation_id). Flashcard/module progress don't
-  // have that constraint — flashcards/questions are always pulled FROM
-  // the server in the first place, so their ids are already real.
-  await pushUnsyncedModules()
-  await pushUnsyncedConversations()
-  await pushUnsyncedChats()
-  await pushUnsyncedFlashcardProgress()
-  await pushUnsyncedModuleProgress()
-  try {
-    await pullModules()
-  } catch (err) {
-    console.error('pullModules failed:', err)
+export async function runSync() {
+  if (isSyncing) {
+    console.log('Sync already in progress, skipping concurrent runSync invocation.')
+    return
   }
+  isSyncing = true
+
   try {
-    await pullFlashcardsAndQuestions()
-  } catch (err) {
-    console.error('pullFlashcardsAndQuestions failed:', err)
-  }
-  try {
-    await pullConversations()
-  } catch (err) {
-    console.error('pullConversations failed:', err)
-  }
-  try {
-    await pullResourcesAndSources()
-  } catch (err) {
-    console.error('pullResourcesAndSources failed:', err)
-  }
-  // These three run LAST, after every push above has had a chance to
-  // land — so the numbers they pull back reflect this device's own
-  // offline progress, not a snapshot from before it synced.
-  try {
-    await pullUserProgress()
-  } catch (err) {
-    console.error('pullUserProgress failed:', err)
-  }
-  try {
-    await pullAchievementDefinitions()
-  } catch (err) {
-    console.error('pullAchievementDefinitions failed:', err)
-  }
-  try {
-    await pullUnlockedAchievements()
-  } catch (err) {
-    console.error('pullUnlockedAchievements failed:', err)
+    const token = await getAccessToken()
+    if (!token) return // not logged in yet, nothing to sync
+
+    // Order matters: each push step can only succeed once its parent has a
+    // real Supabase id. Modules must sync before conversations (conversations
+    // reference module_id), and conversations must sync before chats
+    // (chats reference conversation_id). Flashcard/module progress don't
+    // have that constraint — flashcards/questions are always pulled FROM
+    // the server in the first place, so their ids are already real.
+    await pushUnsyncedDeletions()
+    await pushUnsyncedModules()
+    await pushUnsyncedConversations()
+    await pushUnsyncedChats()
+    await pushUnsyncedFlashcardProgress()
+    await pushUnsyncedModuleProgress()
+    try {
+      await pullModules()
+    } catch (err) {
+      console.error('pullModules failed:', err)
+    }
+    try {
+      await pullFlashcardsAndQuestions()
+    } catch (err) {
+      console.error('pullFlashcardsAndQuestions failed:', err)
+    }
+    try {
+      await pullConversations()
+    } catch (err) {
+      console.error('pullConversations failed:', err)
+    }
+    try {
+      await pullResourcesAndSources()
+    } catch (err) {
+      console.error('pullResourcesAndSources failed:', err)
+    }
+    // These three run LAST, after every push above has had a chance to
+    // land — so the numbers they pull back reflect this device's own
+    // offline progress, not a snapshot from before it synced.
+    try {
+      await pullUserProgress()
+    } catch (err) {
+      console.error('pullUserProgress failed:', err)
+    }
+    try {
+      await pullAchievementDefinitions()
+    } catch (err) {
+      console.error('pullAchievementDefinitions failed:', err)
+    }
+    try {
+      await pullUnlockedAchievements()
+    } catch (err) {
+      console.error('pullUnlockedAchievements failed:', err)
+    }
+  } finally {
+    isSyncing = false
   }
 }
 

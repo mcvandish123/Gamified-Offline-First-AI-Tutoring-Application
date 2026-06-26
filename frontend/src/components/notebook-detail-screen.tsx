@@ -23,7 +23,7 @@ import {
   type ConversationWithPreview,
 } from '../../db/conversations'
 import { getLocalFlashcards, upsertLocalFlashcardProgress, type LocalFlashcard } from '../../db/flashcards'
-import { getLocalQuestions, type LocalQuestion } from '../../db/questions'
+import { getLocalQuestions, getLocalQuestionsForConversation, type LocalQuestion } from '../../db/questions'
 import { getLocalModuleProgress, upsertLocalModuleProgress } from '../../db/module-progress'
 import { getAccessToken } from '../../db/auth-storage'
 import { runSync } from '../../db/sync'
@@ -817,6 +817,7 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
   const [questions, setQuestions] = useState<LocalQuestion[]>([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy')
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -825,6 +826,7 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
   const [score, setScore] = useState(0)
   const [completed, setCompleted] = useState(false)
   const [moduleProgress, setModuleProgress] = useState<any>(null)
+  const [shouldStartQuiz, setShouldStartQuiz] = useState(false)
 
   const loadProgressAndQuiz = useCallback(async () => {
     setLoading(true)
@@ -845,10 +847,32 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
   }, [loadProgressAndQuiz])
 
   const activeQuestions = React.useMemo(() => {
-    return questions.filter((q) => q.difficulty === selectedDifficulty)
-  }, [questions, selectedDifficulty])
+    let filtered = questions
+    if (selectedConversationId === 'legacy') {
+      filtered = questions.filter((q) => !q.conversation_id)
+    } else if (selectedConversationId) {
+      filtered = questions.filter((q) => q.conversation_id === selectedConversationId)
+    } else {
+      return []
+    }
+    return filtered.filter((q) => q.difficulty === selectedDifficulty)
+  }, [questions, selectedConversationId, selectedDifficulty])
+
+  // Automatically start the quiz when the state is set and questions are loaded
+  useEffect(() => {
+    if (shouldStartQuiz && activeQuestions.length > 0) {
+      setShouldStartQuiz(false)
+      setCurrentIndex(0)
+      setSelectedAnswer(null)
+      setIsAnswerSubmitted(false)
+      setScore(0)
+      setCompleted(false)
+      setIsPlaying(true)
+    }
+  }, [shouldStartQuiz, activeQuestions])
 
   const handleGenerateQuiz = async () => {
+    if (!selectedConversationId) return
     setGenerating(true)
     try {
       const token = await getAccessToken()
@@ -860,7 +884,10 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ difficulty: selectedDifficulty }),
+          body: JSON.stringify({
+            difficulty: selectedDifficulty,
+            conversationId: selectedConversationId,
+          }),
         },
       )
 
@@ -880,6 +907,14 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
       Alert.alert(
         'Success!',
         `Generated ${json.questions?.length ?? 0} questions for this difficulty level. Ready to test?`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setShouldStartQuiz(true)
+            }
+          }
+        ]
       )
     } catch (err: any) {
       console.error('Error generating quiz:', err)
@@ -968,8 +1003,66 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
         <ActivityIndicator size="large" color={D.green} style={{ marginBottom: 16 }} />
         <Text style={styles.completedTitle}>Generating Quiz...</Text>
         <Text style={styles.completedSubtitle}>
-          AI is reading your notebook resource texts to design 5 multiple-choice questions. This will take a few moments.
+          AI is reading your chat history to design 5 multiple-choice questions. This will take a few moments.
         </Text>
+      </View>
+    )
+  }
+
+  // 1. Selection Screen (User chooses which conversation to practice)
+  if (selectedConversationId === null) {
+    return (
+      <View style={styles.selectionContainer}>
+        <Text style={styles.selectionTitle}>Choose a Chat to Quiz</Text>
+        <Text style={styles.selectionSubtitle}>
+          Select a conversation from the list below to test your knowledge on what you discussed in that chat.
+        </Text>
+
+        <ScrollView style={styles.selectionScroll} showsVerticalScrollIndicator={false}>
+          {conversations.map((conv) => {
+            const conversationQuestions = questions.filter((q) => q.conversation_id === conv.id)
+            const count = conversationQuestions.length
+            const hasMessages = conv.message_count > 0 || !!conv.last_message
+
+            return (
+              <View key={conv.id} style={styles.selectionCard}>
+                <View style={styles.selectionCardTop}>
+                  <View style={styles.selectionCardContent}>
+                    <Ionicons
+                      name={count > 0 ? "checkmark-circle-outline" : "chatbubbles-outline"}
+                      size={22}
+                      color={count > 0 ? D.green : D.textTabInactive}
+                    />
+                    <View style={styles.selectionCardText}>
+                      <Text style={styles.selectionCardTitle} numberOfLines={1}>{conv.title}</Text>
+                      <Text style={styles.selectionCardMeta}>
+                        {count > 0
+                          ? `${count} questions generated`
+                          : hasMessages
+                          ? 'No questions generated yet'
+                          : 'No messages yet'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.selectionCardActions}>
+                    {hasMessages ? (
+                      <TouchableOpacity
+                        style={styles.compileBtn}
+                        onPress={() => setSelectedConversationId(conv.id)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.compileBtnText}>Select</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <Text style={styles.disabledText}>Empty</Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            )
+          })}
+        </ScrollView>
       </View>
     )
   }
@@ -1133,9 +1226,17 @@ function QuizGameSection({ moduleId, conversations }: QuizGameSectionProps) {
 
   return (
     <View style={styles.selectionContainer}>
+      <TouchableOpacity
+        style={[styles.backToDecksBtn, { marginBottom: 16, alignSelf: 'flex-start' }]}
+        onPress={() => setSelectedConversationId(null)}
+      >
+        <Ionicons name="chevron-back" size={14} color={D.textSecondary} />
+        <Text style={styles.backToDecksText}>Back to Chats</Text>
+      </TouchableOpacity>
+
       <Text style={styles.selectionTitle}>Choose Quiz Difficulty</Text>
       <Text style={styles.selectionSubtitle}>
-        AI will generate multiple choice questions tailored to your current notebook documents.
+        AI will generate multiple choice questions tailored to your conversation.
       </Text>
 
       <View style={styles.difficultySelectionRow}>
@@ -1717,7 +1818,7 @@ const styles = StyleSheet.create({
     color: D.textPrimary,
     backgroundColor: '#F8FAFC',
     marginBottom: 6,
-    ...Platform.select({ web: { outlineStyle: 'none' } }),
+    ...Platform.select({ web: { outlineStyle: 'none' as any } }),
   },
   modalInputError: {
     borderColor: '#FCA5A5',

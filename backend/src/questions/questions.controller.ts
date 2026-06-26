@@ -1,9 +1,11 @@
 import { Controller, Get, Post, Body, Param, Headers } from '@nestjs/common';
 import { QuestionsService } from './questions.service';
 import { SupabaseService } from '../supabase.service';
+import { extractUserPayload } from '../extract-user-id';
 
 class GenerateQuestionsDto {
   difficulty!: string;
+  conversationId?: string;
 }
 
 @Controller()
@@ -14,10 +16,12 @@ export class QuestionsController {
   ) {}
 
   private async getUserId(authorization: string): Promise<string> {
-    const token = authorization?.replace('Bearer ', '');
-    const { data, error } = await this.supabase.getClient().auth.getUser(token);
-    if (error) throw new Error('Unauthorized');
-    return data.user.id;
+    const payload = extractUserPayload(authorization);
+    const userId = payload.sub;
+    const email = payload.email || '';
+    const username = payload.user_metadata?.username || '';
+    await this.supabase.ensureUserExists(userId, email, username);
+    return userId;
   }
 
   @Get('modules/:moduleId/questions')
@@ -49,6 +53,7 @@ export class QuestionsController {
       userId,
       moduleId,
       body.difficulty,
+      body.conversationId,
     );
   }
 }

@@ -102,5 +102,11 @@ export async function getUnsyncedModules(): Promise<LocalModule[]> {
 
 export async function deleteLocalModule(id: string) {
   const db = await getDb()
+  if (!id.startsWith('local-')) {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO deleted_modules (id, deleted_at) VALUES (?, ?)`,
+      [id, new Date().toISOString()],
+    )
+  }
   await db.runAsync(`DELETE FROM modules WHERE id = ?`, [id])
 }

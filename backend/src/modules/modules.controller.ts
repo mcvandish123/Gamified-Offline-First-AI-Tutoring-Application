@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Delete,
+  Patch,
   Body,
   Param,
   Headers,
@@ -72,6 +73,16 @@ export class ModulesController {
   ) {
     const userId = await this.getUserId(authorization);
     return this.modulesService.deleteModule(userId, id);
+  }
+
+  @Patch(':id')
+  async update(
+    @Headers('authorization') authorization: string,
+    @Param('id') id: string,
+    @Body() body: CreateModuleDto,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.modulesService.updateModule(userId, id, body.title);
   }
 
   @Get(':id')

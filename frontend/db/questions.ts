@@ -6,6 +6,7 @@ import { getDb } from './index'
 export interface LocalQuestion {
   id: string
   module_id: string
+  conversation_id: string | null
   question_text: string
   correct_answer: string
   difficulty: string
@@ -28,14 +29,25 @@ export async function getLocalQuestions(
   )
 }
 
+export async function getLocalQuestionsForConversation(
+  conversationId: string,
+): Promise<LocalQuestion[]> {
+  const db = await getDb()
+  return db.getAllAsync<LocalQuestion>(
+    `SELECT * FROM questions WHERE conversation_id = ? ORDER BY created_at ASC`,
+    [conversationId],
+  )
+}
+
 // Caches a batch of questions fetched from GET /modules/:id/questions.
 // Same INSERT OR REPLACE approach as flashcards.ts — the server is the
-// only place that creates or edits questions, so overwriting the local
+// only piece that creates or edits questions, so overwriting the local
 // cache with the latest copy is always safe.
 export async function insertOrReplaceQuestions(
   questions: Array<{
     id: string
     module_id: string
+    conversation_id?: string | null
     question_text: string
     correct_answer: string
     difficulty: string
@@ -52,11 +64,12 @@ export async function insertOrReplaceQuestions(
     for (const q of questions) {
       await db.runAsync(
         `INSERT OR REPLACE INTO questions
-          (id, module_id, question_text, correct_answer, difficulty, type, choices, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, module_id, conversation_id, question_text, correct_answer, difficulty, type, choices, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           q.id,
           q.module_id,
+          q.conversation_id || null,
           q.question_text,
           q.correct_answer,
           q.difficulty,

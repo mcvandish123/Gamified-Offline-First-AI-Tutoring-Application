@@ -1,6 +1,10 @@
-import { Controller, Get, Param, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Headers } from '@nestjs/common';
 import { QuestionsService } from './questions.service';
 import { SupabaseService } from '../supabase.service';
+
+class GenerateQuestionsDto {
+  difficulty!: string;
+}
 
 @Controller()
 export class QuestionsController {
@@ -33,4 +37,19 @@ export class QuestionsController {
     const userId = await this.getUserId(authorization);
     return this.questionsService.getOne(userId, id);
   }
+
+  @Post('modules/:moduleId/questions/generate')
+  async generateQuestions(
+    @Headers('authorization') authorization: string,
+    @Param('moduleId') moduleId: string,
+    @Body() body: GenerateQuestionsDto,
+  ) {
+    const userId = await this.getUserId(authorization);
+    return this.questionsService.generateQuestionsForModule(
+      userId,
+      moduleId,
+      body.difficulty,
+    );
+  }
 }
+

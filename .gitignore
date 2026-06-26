@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build / distribution output
+dist/
+build/
+release/
+
+# Unity build artifact (regenerated)
+game/finalunitybuild/
+
+# Archives
+*.zip
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

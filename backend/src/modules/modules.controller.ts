@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ModulesService } from './modules.service';
 import { SupabaseService } from '../supabase.service';
+import { extractUserPayload } from '../extract-user-id';
 
 class SyncChatsDto {
   messages!: {
@@ -45,10 +46,12 @@ export class ModulesController {
   ) {}
 
   private async getUserId(authorization: string): Promise<string> {
-    const token = authorization?.replace('Bearer ', '');
-    const { data, error } = await this.supabase.getClient().auth.getUser(token);
-    if (error) throw new Error('Unauthorized');
-    return data.user.id;
+    const payload = extractUserPayload(authorization);
+    const userId = payload.sub;
+    const email = payload.email || '';
+    const username = payload.user_metadata?.username || '';
+    await this.supabase.ensureUserExists(userId, email, username);
+    return userId;
   }
 
   @Get()

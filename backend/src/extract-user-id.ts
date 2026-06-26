@@ -29,3 +29,25 @@ export function extractUserId(authorization: string | undefined): string {
     throw new UnauthorizedException('Failed to decode token');
   }
 }
+
+export function extractUserPayload(authorization: string | undefined): any {
+  if (!authorization) {
+    throw new UnauthorizedException('Missing Authorization header');
+  }
+
+  const token = authorization.replace(/^Bearer\s+/i, '');
+  const parts = token.split('.');
+
+  if (parts.length !== 3) {
+    throw new UnauthorizedException('Malformed token');
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(parts[1], 'base64url').toString('utf8'),
+    );
+    return payload;
+  } catch (err) {
+    throw new UnauthorizedException('Failed to decode token');
+  }
+}

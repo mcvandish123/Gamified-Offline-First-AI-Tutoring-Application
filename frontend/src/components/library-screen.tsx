@@ -27,6 +27,7 @@ import { getDb } from '../../db/index'
 import { getAccessToken } from '../../db/auth-storage'
 import { runSync, getUnsyncedCount } from '../../db/sync'
 import { BACKEND_URL } from '../lib/api'
+import { useIsOffline } from '../hooks/use-is-offline'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 // Notebook is a thin view-model over a LocalModule (the modules table row).
@@ -390,15 +391,24 @@ function NotebookCard({ notebook, onPress, onLongPress }: NotebookCardProps) {
   )
 }
 
-function NewNotebookCard({ onPress }: { onPress: () => void }) {
+function NewNotebookCard({
+  onPress,
+  disabled,
+}: {
+  onPress: () => void
+  disabled?: boolean
+}) {
   return (
     <TouchableOpacity
-      style={styles.newCard}
+      style={[styles.newCard, disabled && styles.newCardDisabled]}
       onPress={onPress}
       activeOpacity={0.7}
+      disabled={disabled}
     >
       <Text style={styles.newCardPlus}>+</Text>
-      <Text style={styles.newCardLabel}>New Notebook</Text>
+      <Text style={styles.newCardLabel}>
+        {disabled ? 'New Notebook (offline)' : 'New Notebook'}
+      </Text>
     </TouchableOpacity>
   )
 }
@@ -406,15 +416,18 @@ function NewNotebookCard({ onPress }: { onPress: () => void }) {
 function FAB({
   onPress,
   bottomOffset,
+  disabled,
 }: {
   onPress: () => void
   bottomOffset: number
+  disabled?: boolean
 }) {
   return (
     <TouchableOpacity
-      style={[styles.fab, { bottom: bottomOffset }]}
+      style={[styles.fab, { bottom: bottomOffset }, disabled && styles.fabDisabled]}
       onPress={onPress}
       activeOpacity={0.85}
+      disabled={disabled}
     >
       <Text style={styles.fabIcon}>+</Text>
     </TouchableOpacity>
@@ -441,9 +454,11 @@ function TabItem({ icon, label, active }: TabItemProps) {
 
 function BottomTabBar({
   onLayout,
+  onGamePress,
   onSettingsPress,
 }: {
   onLayout?: (height: number) => void
+  onGamePress?: () => void
   onSettingsPress?: () => void
 }) {
   return (
@@ -453,7 +468,13 @@ function BottomTabBar({
     >
       <TabItem icon="library-outline" label="Library" active />
       <TabItem icon="school-outline" label="Study" />
-      <TabItem icon="game-controller-outline" label="Game" />
+      <TouchableOpacity
+        style={{ flex: 1 }}
+        onPress={onGamePress}
+        activeOpacity={0.7}
+      >
+        <TabItem icon="game-controller-outline" label="Game" />
+      </TouchableOpacity>
       <TouchableOpacity
         style={{ flex: 1 }}
         onPress={onSettingsPress}
@@ -469,17 +490,20 @@ function BottomTabBar({
 
 interface LibraryScreenProps {
   onNotebookPress?: (notebook: Notebook) => void
+  onGamePress?: () => void
   onSettingsPress?: () => void
 }
 
 export default function LibraryScreen({
   onNotebookPress,
+  onGamePress,
   onSettingsPress,
 }: LibraryScreenProps) {
   const [notebooks, setNotebooks] = useState<Notebook[]>([])
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
   const [tabBarHeight, setTabBarHeight] = useState(64)
+  const isOffline = useIsOffline()
   const [syncing, setSyncing] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
 
@@ -727,7 +751,10 @@ export default function LibraryScreen({
                   onLongPress={(n) => setManageNotebook(n)}
                 />
               ))}
-              <NewNotebookCard onPress={() => setModalVisible(true)} />
+              <NewNotebookCard
+                onPress={() => setModalVisible(true)}
+                disabled={isOffline}
+              />
             </View>
           )}
 
@@ -736,11 +763,13 @@ export default function LibraryScreen({
 
         <BottomTabBar
           onLayout={setTabBarHeight}
+          onGamePress={onGamePress}
           onSettingsPress={onSettingsPress}
         />
         <FAB
           onPress={() => setModalVisible(true)}
           bottomOffset={tabBarHeight + 50}
+          disabled={isOffline}
         />
       </SafeAreaView>
     </View>
@@ -887,6 +916,13 @@ const styles = StyleSheet.create({
   },
 
   // ── New notebook dashed card ─────────────────────────────────────────────
+  newCardDisabled: {
+    opacity: 0.5,
+  },
+  fabDisabled: {
+    backgroundColor: '#A0AEC0',
+    opacity: 0.6,
+  },
   newCard: {
     width: '48%' as unknown as number,
     minHeight: 140,

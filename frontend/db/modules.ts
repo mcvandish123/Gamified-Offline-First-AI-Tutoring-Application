@@ -71,8 +71,13 @@ export async function markModuleSynced(
 
   if (serverModule.id !== localId) {
     // Supabase assigned a different id than our temp client-side id —
-    // remove the temp row and insert the real one.
+    // remove the temp row and insert the real one, then re-point any
+    // conversations that were created locally under the old id.
     await db.runAsync(`DELETE FROM modules WHERE id = ?`, [localId])
+    await db.runAsync(
+      `UPDATE conversations SET module_id = ? WHERE module_id = ?`,
+      [serverModule.id, localId],
+    )
   }
 
   await db.runAsync(

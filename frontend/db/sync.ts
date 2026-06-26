@@ -436,7 +436,7 @@ async function pullConversations() {
          VALUES (?, ?, ?, ?, ?, ?, 1)`,
         [
           conv.id,
-          conv.module_id,
+          mod.id,   // always use the module we fetched from, not the server field which may be absent
           conv.user_id,
           conv.title,
           conv.created_at,

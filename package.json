@@ -1,0 +1,59 @@
+{
+  "name": "ai-tutor-desktop",
+  "version": "1.0.0",
+  "description": "Gamified offline-first AI tutoring app — Electron desktop wrapper",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "build:web": "cd frontend && npx expo export -p web --output-dir dist",
+    "electron": "electron .",
+    "dev": "concurrently \"npm run dev:expo\" \"npm run dev:electron\"",
+    "dev:expo": "cd frontend && npx expo start --web",
+    "dev:electron": "wait-on http://localhost:8081 && EXPO_URL=http://localhost:8081 electron .",
+    "dist": "npm run build:web && electron-builder --win --mac --linux",
+    "dist:win": "npm run build:web && electron-builder --win",
+    "dist:mac": "npm run build:web && electron-builder --mac"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.aitutor.desktop",
+    "productName": "AI Tutor",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "frontend/dist",
+        "to": "web",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "game",
+        "to": "game",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": ["portable", "nsis"],
+      "icon": "frontend/assets/images/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "frontend/assets/images/icon.png"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

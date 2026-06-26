@@ -81,6 +81,18 @@ export async function initDb() {
     console.error('Questions migration check failed:', err)
   }
 
+  // Migration: remove conversations whose module_id no longer exists in modules
+  // (caused by local→server ID reassignment that didn't cascade).
+  // Safe to drop — synced ones will be re-pulled; unsynced ones couldn't be pushed anyway.
+  try {
+    await database.execAsync(`
+      DELETE FROM conversations
+      WHERE module_id NOT IN (SELECT id FROM modules)
+    `)
+  } catch (err) {
+    console.error('Orphaned conversation cleanup failed:', err)
+  }
+
   await database.execAsync(`
     PRAGMA journal_mode = WAL;
 

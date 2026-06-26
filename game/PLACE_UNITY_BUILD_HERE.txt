@@ -1,0 +1,20 @@
+Place your Unity standalone build output in this folder.
+
+The Electron main process starts a WebSocket server on ws://localhost:8765.
+Configure your Unity game to connect as a WebSocket client to that address,
+using the query parameter ?client=unity so the server can route messages correctly:
+
+  ws://localhost:8765?client=unity
+
+Message format (JSON):
+  Incoming (from the tutor app → Unity):
+    { "from": "app", "type": "<event>", ...payload }
+
+  Outgoing (Unity → tutor app):
+    { "type": "<event>", ...payload }
+
+The tutor app uses sendToUnity() from src/lib/unity-bridge.ts to dispatch events.
+Use useUnityMessages() in any React component to receive events from Unity.
+
+Example Unity C# (using NativeWebSocket or best-http):
+  ws = new WebSocket("ws://localhost:8765?client=unity");

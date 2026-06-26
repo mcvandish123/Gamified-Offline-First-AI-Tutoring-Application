@@ -28,6 +28,8 @@ import { getLocalModuleProgress, upsertLocalModuleProgress } from '../../db/modu
 import { getAccessToken } from '../../db/auth-storage'
 import { runSync } from '../../db/sync'
 import { BACKEND_URL } from '../lib/api'
+import { useIsOffline } from '../hooks/use-is-offline'
+import { sendFlashcardsToUnity, isElectron } from '../lib/unity-bridge'
 
 // ─── Design Tokens ───────────────────────────────────────────────────────────
 // Matches library-screen.tsx so the two screens feel like one app.
@@ -214,15 +216,24 @@ function NotebookCard({ name }: { name: string }) {
   )
 }
 
-function NewChatButton({ onPress }: { onPress: () => void }) {
+function NewChatButton({
+  onPress,
+  disabled,
+}: {
+  onPress: () => void
+  disabled?: boolean
+}) {
   return (
     <TouchableOpacity
-      style={styles.newChatBtn}
+      style={[styles.newChatBtn, disabled && styles.newChatBtnDisabled]}
       onPress={onPress}
       activeOpacity={0.85}
+      disabled={disabled}
     >
       <Text style={styles.newChatPlus}>+</Text>
-      <Text style={styles.newChatLabel}>New Chat</Text>
+      <Text style={styles.newChatLabel}>
+        {disabled ? 'New Chat (offline)' : 'New Chat'}
+      </Text>
     </TouchableOpacity>
   )
 }
@@ -388,6 +399,35 @@ function FlashcardGameSection({ moduleId, conversations }: FlashcardGameSectionP
       Alert.alert('Error', err.message || 'Could not compile flashcards. Please try again.')
     } finally {
       setCompilingId(null)
+    }
+  }
+
+  // Sends a conversation's compiled flashcards to the Unity game as JSON.
+  // Only meaningful inside Electron (where the unity bridge exists); in a
+  // plain browser it tells the user the game isn't connected.
+  const handleSendDeckToGame = (conv: ConversationWithPreview) => {
+    const cards = flashcards
+      .filter((fc) => fc.conversation_id === conv.id)
+      .map((fc) => ({ id: fc.id, front: fc.front, back: fc.back }))
+
+    if (cards.length === 0) {
+      Alert.alert('No cards', 'Compile flashcards for this chat first.')
+      return
+    }
+
+    const ok = sendFlashcardsToUnity({
+      deckId: conv.id,
+      deckTitle: conv.title,
+      cards,
+    })
+
+    if (ok) {
+      Alert.alert('Sent to Game', `Sent ${cards.length} flashcards to the game.`)
+    } else {
+      Alert.alert(
+        'Game not connected',
+        'The game bridge is only available in the desktop app. Launch the Electron app to send flashcards to the Unity game.',
+      )
     }
   }
 
@@ -626,6 +666,16 @@ function FlashcardGameSection({ moduleId, conversations }: FlashcardGameSectionP
                             {hasNewPrompts ? 'Compile New' : 'Compile Again'}
                           </Text>
                         </TouchableOpacity>
+
+                        {isElectron() && (
+                          <TouchableOpacity
+                            style={styles.sendGameBtnDeck}
+                            onPress={() => handleSendDeckToGame(conv)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="game-controller-outline" size={16} color={D.green} />
+                          </TouchableOpacity>
+                        )}
 
                         <TouchableOpacity
                           style={styles.resetBtnDeck}
@@ -1348,6 +1398,7 @@ export default function NotebookDetailScreen({
   )
   const [loading, setLoading] = useState(true)
   const [modalVisible, setModalVisible] = useState(false)
+  const isOffline = useIsOffline()
 
   const refreshFromLocal = useCallback(async () => {
     const rows = await getLocalConversations(notebook.id)
@@ -1487,7 +1538,10 @@ export default function NotebookDetailScreen({
         >
           <NotebookCard name={notebook.name} />
 
-          <NewChatButton onPress={() => setModalVisible(true)} />
+          <NewChatButton
+            onPress={() => setModalVisible(true)}
+            disabled={isOffline}
+          />
 
           <DetailTabBar active={activeTab} onChange={setActiveTab} />
 
@@ -1628,6 +1682,10 @@ const styles = StyleSheet.create({
       },
       android: { elevation: 3 },
     }),
+  },
+  newChatBtnDisabled: {
+    backgroundColor: '#A0AEC0',
+    opacity: 0.7,
   },
   newChatPlus: {
     fontSize: 16,
@@ -1949,6 +2007,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF1F2',
     borderWidth: 1,
     borderColor: '#FECDD3',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendGameBtnDeck: {
+    width: 36,
+    height: 36,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
